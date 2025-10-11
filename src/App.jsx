@@ -1,5 +1,5 @@
 import React, { useState, useEffect, createContext, useContext } from 'react';
-import { Trophy, Users, Calendar, TrendingUp, LogOut, Eye, EyeOff, Plus, Edit2, Trash2, Upload, ExternalLink, X, UserPlus, Target, Award, ChevronDown, ChevronUp, Check, Key, DollarSign, CheckCircle, XCircle, AlertCircle } from 'lucide-react';
+import { Trophy, Users, Calendar, TrendingUp, LogOut, Eye, EyeOff, Plus, Edit2, Trash2, Upload, ExternalLink, X, UserPlus, Target, Award, ChevronDown, ChevronUp, Check, Key, DollarSign, CheckCircle, XCircle, AlertCircle, FileText, Download } from 'lucide-react';
 import { initializeApp } from 'firebase/app';
 import { getFirestore, collection, addDoc, updateDoc, deleteDoc, doc, getDocs, onSnapshot, serverTimestamp } from 'firebase/firestore';
 
@@ -527,6 +527,7 @@ const AdminPanel = ({ setView }) => {
   const [showTeamForm, setShowTeamForm] = useState(false);
   const [editingPassword, setEditingPassword] = useState(null);
   const [selectedFinanceRound, setSelectedFinanceRound] = useState(null);
+  const [selectedDashboardRound, setSelectedDashboardRound] = useState(null);
   const [paymentFilter, setPaymentFilter] = useState('all');
   const [whatsappMessage, setWhatsappMessage] = useState(settings?.whatsappMessage || '');
 
@@ -535,6 +536,16 @@ const AdminPanel = ({ setView }) => {
       setWhatsappMessage(settings.whatsappMessage);
     }
   }, [settings]);
+
+  // Inicializar dashboard com a primeira rodada finalizada
+  useEffect(() => {
+    if (!selectedDashboardRound) {
+      const finishedRounds = rounds.filter(r => r.status === 'finished').sort((a, b) => b.number - a.number);
+      if (finishedRounds.length > 0) {
+        setSelectedDashboardRound(finishedRounds[0].id);
+      }
+    }
+  }, [rounds]);
 
   const handleDeleteUser = async (user) => {
     if (!confirm(`⚠️ ATENÇÃO!\n\nDeseja realmente excluir o usuário "${user.name}"?\n\nIsso também excluirá todos os palpites deste usuário!\n\nEsta ação não pode ser desfeita.`)) {
@@ -627,6 +638,62 @@ const AdminPanel = ({ setView }) => {
     };
   };
 
+  const getRoundDashboardData = (roundId) => {
+    if (!roundId) return null;
+    
+    const round = rounds.find(r => r.id === roundId);
+    if (!round || round.status !== 'finished') return null;
+
+    const participants = getRoundParticipants(roundId);
+    const paidParticipants = participants.filter(u => getPaymentStatus(u.id, roundId));
+    
+    const totalPaid = paidParticipants.length * 15;
+    const prizePool = totalPaid * 0.9;
+    const adminFee = totalPaid * 0.1;
+
+    // Calcular ranking
+    const ranking = paidParticipants.map(user => {
+      let points = 0;
+      round.matches?.forEach(match => {
+        const pred = predictions.find(p => 
+          p.userId === user.id && 
+          p.roundId === roundId && 
+          p.matchId === match.id
+        );
+        
+        if (pred && match.finished && match.homeScore !== null && match.awayScore !== null) {
+          if (pred.homeScore === match.homeScore && pred.awayScore === match.awayScore) {
+            points += 3;
+          } else {
+            const predResult = pred.homeScore > pred.awayScore ? 'home' : pred.homeScore < pred.awayScore ? 'away' : 'draw';
+            const matchResult = match.homeScore > match.awayScore ? 'home' : match.homeScore < match.awayScore ? 'away' : 'draw';
+            if (predResult === matchResult) {
+              points += 1;
+            }
+          }
+        }
+      });
+      
+      return { user, points };
+    }).sort((a, b) => b.points - a.points);
+
+    const maxPoints = ranking.length > 0 ? ranking[0].points : 0;
+    const winners = ranking.filter(r => r.points === maxPoints);
+    const prizePerWinner = winners.length > 0 ? prizePool / winners.length : 0;
+
+    return {
+      round,
+      totalParticipants: participants.length,
+      paidCount: paidParticipants.length,
+      totalPaid,
+      prizePool,
+      adminFee,
+      winners,
+      prizePerWinner,
+      ranking
+    };
+  };
+
   const getWinners = () => {
     const finishedRounds = rounds.filter(r => r.status === 'finished');
     if (finishedRounds.length === 0) return [];
@@ -673,6 +740,114 @@ const AdminPanel = ({ setView }) => {
       alert('✅ Mensagem atualizada com sucesso!');
     } catch (error) {
       alert('❌ Erro ao salvar: ' + error.message);
+    }
+  };
+
+  const generateRoundPDF = async (roundId) => {
+    try {
+      // Carregar jsPDF do CDN se ainda não estiver carregado
+      if (!window.jspdf) {
+        const script = document.createElement('script');
+        script.src = 'https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js';
+        document.head.appendChild(script);
+        await new Promise((resolve) => {
+          script.onload = resolve;
+        });
+      }
+
+      const { jsPDF } = window.jspdf;
+      const pdf = new jsPDF();
+      const round = rounds.find(r => r.id === roundId);
+      if (!round) return;
+
+      const allParticipants = getRoundParticipants(roundId);
+      // FILTRAR APENAS QUEM PAGOU
+      const participants = allParticipants.filter(u => getPaymentStatus(u.id, roundId));
+      
+      if (participants.length === 0) {
+        alert('⚠️ Nenhum participante com pagamento confirmado nesta rodada!');
+        return;
+      }
+      
+      // Título
+      pdf.setFontSize(20);
+      pdf.setFont(undefined, 'bold');
+      pdf.text('BOLÃO BRASILEIRÃO 2025', 105, 20, { align: 'center' });
+      
+      pdf.setFontSize(16);
+      pdf.text(round.name, 105, 30, { align: 'center' });
+      
+      pdf.setFontSize(10);
+      pdf.setFont(undefined, 'normal');
+      pdf.text(`Relatório gerado em: ${new Date().toLocaleString('pt-BR')}`, 105, 38, { align: 'center' });
+      pdf.text(`Participantes confirmados (pagos): ${participants.length}`, 105, 44, { align: 'center' });
+      
+      let yPos = 55;
+      
+      // Para cada participante que PAGOU
+      participants.forEach((user, index) => {
+        if (yPos > 250) {
+          pdf.addPage();
+          yPos = 20;
+        }
+
+        // Nome do participante
+        pdf.setFontSize(12);
+        pdf.setFont(undefined, 'bold');
+        pdf.text(`${index + 1}. ${user.name}`, 20, yPos);
+        pdf.setFontSize(9);
+        pdf.setFont(undefined, 'normal');
+        pdf.text(`WhatsApp: ${user.whatsapp}`, 20, yPos + 5);
+        
+        // Status PAGO
+        pdf.setTextColor(0, 128, 0);
+        pdf.setFont(undefined, 'bold');
+        pdf.text('PAGO', 120, yPos + 5);
+        pdf.setTextColor(0, 0, 0);
+        pdf.setFont(undefined, 'normal');
+        
+        yPos += 12;
+
+        // Palpites do usuário
+        round.matches?.forEach((match, mIndex) => {
+          const homeTeam = teams.find(t => t.id === match.homeTeamId);
+          const awayTeam = teams.find(t => t.id === match.awayTeamId);
+          const pred = predictions.find(p => 
+            p.userId === user.id && 
+            p.roundId === roundId && 
+            p.matchId === match.id
+          );
+
+          if (pred) {
+            pdf.setFontSize(9);
+            const matchText = `  ${mIndex + 1}) ${homeTeam?.name} ${pred.homeScore} x ${pred.awayScore} ${awayTeam?.name}`;
+            pdf.text(matchText, 25, yPos);
+            yPos += 5;
+          }
+        });
+
+        yPos += 3;
+        pdf.setDrawColor(200, 200, 200);
+        pdf.line(20, yPos, 190, yPos);
+        yPos += 8;
+      });
+
+      // Rodapé
+      const pageCount = pdf.internal.getNumberOfPages();
+      for (let i = 1; i <= pageCount; i++) {
+        pdf.setPage(i);
+        pdf.setFontSize(8);
+        pdf.setFont(undefined, 'normal');
+        pdf.setTextColor(0, 0, 0);
+        pdf.text(`Página ${i} de ${pageCount}`, 105, 290, { align: 'center' });
+      }
+
+      // Salvar PDF
+      pdf.save(`Bolao_${round.name.replace(/\s+/g, '_')}_CONFIRMADOS_${new Date().getTime()}.pdf`);
+      alert(`✅ PDF gerado com sucesso!\n\n📄 ${participants.length} participantes confirmados (pagos)`);
+    } catch (error) {
+      console.error('Erro ao gerar PDF:', error);
+      alert('❌ Erro ao gerar PDF: ' + error.message);
     }
   };
 
@@ -728,7 +903,16 @@ const AdminPanel = ({ setView }) => {
 
   const changeStatus = async (id, newStatus) => {
     const round = rounds.find(r => r.id === id);
-    if (round) await updateRound(id, { ...round, status: newStatus });
+    if (round) {
+      await updateRound(id, { ...round, status: newStatus });
+      
+      // Se finalizou a rodada, gerar PDF automaticamente
+      if (newStatus === 'finished') {
+        setTimeout(() => {
+          generateRoundPDF(id);
+        }, 500);
+      }
+    }
   };
 
   const getStatusBadge = (status) => {
@@ -762,6 +946,11 @@ const AdminPanel = ({ setView }) => {
             {round.status === 'upcoming' && <button onClick={() => changeStatus(round.id, 'open')} className="px-3 py-2 bg-green-100 text-green-700 rounded-lg text-sm">Abrir</button>}
             {round.status === 'open' && <button onClick={() => changeStatus(round.id, 'closed')} className="px-3 py-2 bg-yellow-100 text-yellow-700 rounded-lg text-sm">Fechar</button>}
             {round.status === 'closed' && <button onClick={() => changeStatus(round.id, 'finished')} className="px-3 py-2 bg-blue-100 text-blue-700 rounded-lg text-sm">Finalizar</button>}
+            {(round.status === 'closed' || round.status === 'finished') && (
+              <button onClick={() => generateRoundPDF(round.id)} className="p-2 bg-purple-100 text-purple-700 rounded-lg hover:bg-purple-200" title="Gerar PDF">
+                <Download size={18} />
+              </button>
+            )}
             <button onClick={() => { setEditingRound(round); setShowRoundForm(true); }} className="p-2 bg-blue-100 text-blue-700 rounded-lg"><Edit2 size={18} /></button>
             <button onClick={() => confirm('Excluir?') && deleteRound(round.id)} className="p-2 bg-red-100 text-red-700 rounded-lg"><Trash2 size={18} /></button>
           </div>
@@ -827,23 +1016,54 @@ const AdminPanel = ({ setView }) => {
       <div className="max-w-7xl mx-auto px-4 py-6">
         {activeTab === 'dashboard' && (
           <div>
-            <h2 className="text-2xl font-bold mb-6">Dashboard Geral</h2>
+            <div className="flex justify-between items-start mb-6">
+              <div>
+                <h2 className="text-2xl font-bold">Dashboard por Rodada</h2>
+                <p className="text-gray-600 mt-1">Acompanhe resultados e premiação</p>
+              </div>
+              <div className="w-64">
+                <label className="block text-sm font-medium mb-2">Selecione a Rodada</label>
+                <select
+                  value={selectedDashboardRound || ''}
+                  onChange={(e) => setSelectedDashboardRound(e.target.value)}
+                  className="w-full px-4 py-2 border rounded-lg bg-white"
+                >
+                  {rounds.filter(r => r.status === 'finished').length === 0 && (
+                    <option value="">Nenhuma rodada finalizada</option>
+                  )}
+                  {rounds.filter(r => r.status === 'finished').sort((a, b) => b.number - a.number).map(round => (
+                    <option key={round.id} value={round.id}>
+                      {round.name}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            </div>
             
             {(() => {
-              const financialSummary = getTotalFinancialSummary();
-              const winners = getWinners();
-              const prizePerWinner = winners.length > 0 ? financialSummary.prizePool / winners.length : 0;
+              const dashboardData = getRoundDashboardData(selectedDashboardRound);
+
+              if (!dashboardData) {
+                return (
+                  <div className="bg-white rounded-xl p-12 text-center border-2 border-dashed">
+                    <Trophy className="mx-auto text-gray-400 mb-4" size={48} />
+                    <h3 className="text-xl font-semibold mb-2">Nenhuma rodada finalizada</h3>
+                    <p className="text-gray-500">O dashboard será exibido após a finalização da primeira rodada</p>
+                  </div>
+                );
+              }
 
               return (
                 <div className="space-y-6">
-                  {/* Resumo Financeiro Total */}
+                  {/* Resumo Financeiro da Rodada */}
                   <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
                     <div className="bg-blue-50 border-2 border-blue-200 rounded-xl p-6">
                       <div className="flex items-center justify-between mb-3">
                         <DollarSign className="text-blue-500" size={32} />
                       </div>
                       <p className="text-blue-600 text-sm font-medium mb-1">Total Arrecadado</p>
-                      <p className="text-3xl font-bold text-blue-900">R$ {financialSummary.totalReceived.toFixed(2)}</p>
+                      <p className="text-3xl font-bold text-blue-900">R$ {dashboardData.totalPaid.toFixed(2)}</p>
+                      <p className="text-xs text-blue-600 mt-1">{dashboardData.paidCount} pagamentos</p>
                     </div>
 
                     <div className="bg-green-50 border-2 border-green-200 rounded-xl p-6">
@@ -851,7 +1071,8 @@ const AdminPanel = ({ setView }) => {
                         <Trophy className="text-green-500" size={32} />
                       </div>
                       <p className="text-green-600 text-sm font-medium mb-1">Premiação (90%)</p>
-                      <p className="text-3xl font-bold text-green-900">R$ {financialSummary.prizePool.toFixed(2)}</p>
+                      <p className="text-3xl font-bold text-green-900">R$ {dashboardData.prizePool.toFixed(2)}</p>
+                      <p className="text-xs text-green-600 mt-1">Para {dashboardData.winners.length} vencedor(es)</p>
                     </div>
 
                     <div className="bg-purple-50 border-2 border-purple-200 rounded-xl p-6">
@@ -859,15 +1080,16 @@ const AdminPanel = ({ setView }) => {
                         <Award className="text-purple-500" size={32} />
                       </div>
                       <p className="text-purple-600 text-sm font-medium mb-1">Taxa Admin (10%)</p>
-                      <p className="text-3xl font-bold text-purple-900">R$ {financialSummary.adminFee.toFixed(2)}</p>
+                      <p className="text-3xl font-bold text-purple-900">R$ {dashboardData.adminFee.toFixed(2)}</p>
                     </div>
 
-                    <div className="bg-red-50 border-2 border-red-200 rounded-xl p-6">
+                    <div className="bg-orange-50 border-2 border-orange-200 rounded-xl p-6">
                       <div className="flex items-center justify-between mb-3">
-                        <AlertCircle className="text-red-500" size={32} />
+                        <Users className="text-orange-500" size={32} />
                       </div>
-                      <p className="text-red-600 text-sm font-medium mb-1">Pendente</p>
-                      <p className="text-3xl font-bold text-red-900">R$ {financialSummary.totalPending.toFixed(2)}</p>
+                      <p className="text-orange-600 text-sm font-medium mb-1">Participantes</p>
+                      <p className="text-3xl font-bold text-orange-900">{dashboardData.totalParticipants}</p>
+                      <p className="text-xs text-orange-600 mt-1">{dashboardData.paidCount} pagos</p>
                     </div>
                   </div>
 
@@ -876,33 +1098,34 @@ const AdminPanel = ({ setView }) => {
                     <div className="flex items-center gap-3 mb-6">
                       <Trophy size={48} />
                       <div>
-                        <h3 className="text-3xl font-bold">Premiação</h3>
-                        <p className="text-yellow-100">Classificação Atual</p>
+                        <h3 className="text-3xl font-bold">Premiação - {dashboardData.round.name}</h3>
+                        <p className="text-yellow-100">
+                          {dashboardData.winners.length > 1 ? `${dashboardData.winners.length} Vencedores (Empate)` : 'Campeão da Rodada'}
+                        </p>
                       </div>
                     </div>
 
-                    {winners.length === 0 ? (
+                    {dashboardData.winners.length === 0 ? (
                       <div className="bg-white bg-opacity-20 rounded-xl p-8 text-center">
-                        <p className="text-xl font-semibold">Nenhuma rodada finalizada ainda</p>
-                        <p className="text-yellow-100 mt-2">A premiação será calculada após as finalizações</p>
+                        <p className="text-xl font-semibold">Nenhum participante pagou</p>
+                        <p className="text-yellow-100 mt-2">Aguardando confirmação de pagamentos</p>
                       </div>
                     ) : (
                       <div className="space-y-4">
                         <div className="bg-white bg-opacity-20 rounded-xl p-6">
                           <div className="text-center mb-4">
-                            <p className="text-yellow-100 text-sm font-medium">PRÊMIO {winners.length > 1 ? 'DIVIDIDO' : 'TOTAL'}</p>
-                            <p className="text-5xl font-bold mt-2">R$ {prizePerWinner.toFixed(2)}</p>
-                            <p className="text-yellow-100 text-sm mt-1">por vencedor</p>
+                            <p className="text-yellow-100 text-sm font-medium">PRÊMIO {dashboardData.winners.length > 1 ? 'POR VENCEDOR' : 'TOTAL'}</p>
+                            <p className="text-5xl font-bold mt-2">R$ {dashboardData.prizePerWinner.toFixed(2)}</p>
                           </div>
                         </div>
 
                         <div className="bg-white bg-opacity-20 rounded-xl p-6">
                           <h4 className="text-xl font-bold mb-4 flex items-center gap-2">
                             <Award size={24} />
-                            {winners.length > 1 ? `${winners.length} Vencedores (Empate)` : '🏆 Campeão Atual'}
+                            {dashboardData.winners.length > 1 ? 'Vencedores' : '🏆 Campeão'}
                           </h4>
                           <div className="space-y-3">
-                            {winners.map((winner, index) => (
+                            {dashboardData.winners.map((winner) => (
                               <div key={winner.user.id} className="bg-white rounded-lg p-4 text-gray-900 flex justify-between items-center">
                                 <div>
                                   <p className="font-bold text-lg">{winner.user.name}</p>
@@ -910,45 +1133,69 @@ const AdminPanel = ({ setView }) => {
                                 </div>
                                 <div className="text-right">
                                   <p className="text-2xl font-bold text-green-600">{winner.points} pts</p>
-                                  <p className="text-sm font-medium text-green-700">R$ {prizePerWinner.toFixed(2)}</p>
+                                  <p className="text-sm font-medium text-green-700">R$ {dashboardData.prizePerWinner.toFixed(2)}</p>
                                 </div>
                               </div>
                             ))}
                           </div>
                         </div>
 
-                        {winners.length > 1 && (
+                        {dashboardData.winners.length > 1 && (
                           <div className="bg-white bg-opacity-20 rounded-xl p-4 text-center">
-                            <p className="text-sm">⚠️ Empate detectado! Premiação dividida igualmente entre os vencedores.</p>
+                            <p className="text-sm">⚠️ Empate! Premiação dividida igualmente entre os vencedores.</p>
                           </div>
                         )}
                       </div>
                     )}
                   </div>
 
-                  {/* Estatísticas Gerais */}
-                  <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                    <div className="bg-white rounded-xl shadow-sm border p-6">
-                      <p className="text-gray-600 text-sm font-medium mb-2">Total de Rodadas</p>
-                      <p className="text-3xl font-bold text-gray-900">{rounds.length}</p>
-                      <div className="mt-3 space-y-1 text-sm">
-                        <p className="text-gray-600">🔜 Futuras: {rounds.filter(r => r.status === 'upcoming').length}</p>
-                        <p className="text-green-600">✅ Abertas: {rounds.filter(r => r.status === 'open').length}</p>
-                        <p className="text-yellow-600">🔒 Fechadas: {rounds.filter(r => r.status === 'closed').length}</p>
-                        <p className="text-purple-600">🏁 Finalizadas: {rounds.filter(r => r.status === 'finished').length}</p>
-                      </div>
+                  {/* Ranking Completo da Rodada */}
+                  <div className="bg-white rounded-xl shadow-sm border overflow-hidden">
+                    <div className="bg-gray-50 p-4 border-b">
+                      <h3 className="text-lg font-bold">Ranking Completo</h3>
                     </div>
-
-                    <div className="bg-white rounded-xl shadow-sm border p-6">
-                      <p className="text-gray-600 text-sm font-medium mb-2">Participantes</p>
-                      <p className="text-3xl font-bold text-gray-900">{users.filter(u => !u.isAdmin).length}</p>
-                      <p className="text-sm text-gray-500 mt-3">Jogadores ativos no bolão</p>
-                    </div>
-
-                    <div className="bg-white rounded-xl shadow-sm border p-6">
-                      <p className="text-gray-600 text-sm font-medium mb-2">Total de Palpites</p>
-                      <p className="text-3xl font-bold text-gray-900">{predictions.length}</p>
-                      <p className="text-sm text-gray-500 mt-3">Palpites registrados</p>
+                    <div className="overflow-x-auto">
+                      <table className="w-full">
+                        <thead className="bg-gray-100 border-b">
+                          <tr>
+                            <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Pos</th>
+                            <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Nome</th>
+                            <th className="px-4 py-3 text-center text-xs font-medium text-gray-500 uppercase">Pontos</th>
+                            <th className="px-4 py-3 text-center text-xs font-medium text-gray-500 uppercase">Prêmio</th>
+                          </tr>
+                        </thead>
+                        <tbody className="divide-y">
+                          {dashboardData.ranking.map((item, index) => {
+                            const isWinner = dashboardData.winners.some(w => w.user.id === item.user.id);
+                            return (
+                              <tr key={item.user.id} className={isWinner ? 'bg-yellow-50' : ''}>
+                                <td className="px-4 py-3">
+                                  <div className="flex items-center gap-2">
+                                    {index === 0 && <Trophy className="text-yellow-500" size={16} />}
+                                    <span className="font-bold">{index + 1}º</span>
+                                  </div>
+                                </td>
+                                <td className="px-4 py-3">
+                                  <div>
+                                    <p className="font-medium">{item.user.name}</p>
+                                    <p className="text-xs text-gray-500">{item.user.whatsapp}</p>
+                                  </div>
+                                </td>
+                                <td className="px-4 py-3 text-center">
+                                  <span className="font-bold text-green-600">{item.points}</span>
+                                </td>
+                                <td className="px-4 py-3 text-center">
+                                  {isWinner ? (
+                                    <span className="font-bold text-green-600">R$ {dashboardData.prizePerWinner.toFixed(2)}</span>
+                                  ) : (
+                                    <span className="text-gray-400">-</span>
+                                  )}
+                                </td>
+                              </tr>
+                            );
+                          })}
+                        </tbody>
+                      </table>
                     </div>
                   </div>
                 </div>
@@ -1431,9 +1678,17 @@ const UserPanel = ({ setView }) => {
                   </span>
                 )}
                 {round.status === 'finished' && points !== null && (
-                  <span className="bg-green-600 text-white px-3 py-1 rounded-full text-xs font-bold">
-                    {points} pontos
-                  </span>
+                  <>
+                    {!isPaid ? (
+                      <span className="bg-gray-400 text-white px-3 py-1 rounded-full text-xs font-bold flex items-center gap-1">
+                        🔒 0 pontos (não pago)
+                      </span>
+                    ) : (
+                      <span className="bg-green-600 text-white px-3 py-1 rounded-full text-xs font-bold">
+                        {points} pontos
+                      </span>
+                    )}
+                  </>
                 )}
                 {round.status === 'open' && !hasPredictions && (
                   <span className="bg-red-100 text-red-700 px-3 py-1 rounded-full text-xs font-medium">
@@ -1566,6 +1821,17 @@ const UserPanel = ({ setView }) => {
                           )}
                         </div>
                       )}
+                      
+                      {/* Aviso de pagamento pendente */}
+                      {round.status === 'finished' && !isPaid && (
+                        <div className="mt-3 pt-3 border-t">
+                          <div className="bg-orange-50 border border-orange-200 rounded-lg p-3 text-center">
+                            <p className="text-xs text-orange-700 font-medium">
+                              ⚠️ Pagamento pendente - Pontos não computados
+                            </p>
+                          </div>
+                        </div>
+                      )}
                     </div>
                   );
                 })}
@@ -1670,7 +1936,7 @@ const UserPanel = ({ setView }) => {
 
   const ConfirmModal = ({ round, predictionsData, onConfirm, onCancel }) => (
     <div className="fixed inset-0 bg-black bg-opacity-70 flex items-center justify-center p-4 z-50">
-      <div className="bg-white rounded-2xl max-w-lg w-full">
+      <div className="bg-white rounded-2xl max-w-lg w-full max-h-[90vh] overflow-y-auto">
         <div className="p-6 bg-gradient-to-r from-yellow-500 to-orange-500 text-white rounded-t-2xl">
           <div className="flex items-center gap-3">
             <Award size={32} />
@@ -1687,6 +1953,7 @@ const UserPanel = ({ setView }) => {
               <div>
                 <h4 className="font-bold text-red-900 text-lg mb-2">⚠️ Atenção!</h4>
                 <p className="text-red-800 font-medium">Após confirmar, você <span className="underline">NÃO PODERÁ MAIS</span> alterar!</p>
+                <p className="text-red-700 text-sm mt-2">💰 Lembre-se de efetuar o pagamento de R$ 15,00 para validar seus pontos.</p>
               </div>
             </div>
           </div>
@@ -1807,20 +2074,47 @@ const UserPanel = ({ setView }) => {
     return users.filter(u => !u.isAdmin).map(user => {
       const userPoints = calculateUserRoundPoints(user.id, roundId);
       const userRoundPreds = predictions.filter(p => p.userId === user.id && p.roundId === roundId);
+      const isPaid = userRoundPreds.length > 0 && userRoundPreds[0]?.paid;
       
       return {
         user,
         points: userPoints,
-        predictions: userRoundPreds.length
+        predictions: userRoundPreds.length,
+        isPaid
       };
-    }).sort((a, b) => {
+    })
+    .filter(item => item.isPaid) // Só mostra quem pagou
+    .sort((a, b) => {
       // Ordena por pontos, se empate ordena por quem tem mais palpites
       if (b.points !== a.points) return b.points - a.points;
       return b.predictions - a.predictions;
     });
   };
   
+  // Calcular premiação por rodada
+  const getRoundPrize = (roundId) => {
+    const round = rounds.find(r => r.id === roundId);
+    if (!round || round.status !== 'finished') return null;
+
+    const ranking = getRankingForRound(roundId);
+    if (ranking.length === 0) return null;
+
+    const totalPaid = ranking.length * 15;
+    const prizePool = totalPaid * 0.9;
+    const maxPoints = ranking[0].points;
+    const winners = ranking.filter(r => r.points === maxPoints);
+    const prizePerWinner = prizePool / winners.length;
+
+    return {
+      totalPaid,
+      prizePool,
+      winners,
+      prizePerWinner
+    };
+  };
+  
   const ranking = selectedRankingRound ? getRankingForRound(selectedRankingRound) : [];
+  const roundPrize = selectedRankingRound ? getRoundPrize(selectedRankingRound) : null;
 
   return (
     <div className="min-h-screen bg-gray-50">
@@ -1958,57 +2252,123 @@ const UserPanel = ({ setView }) => {
                 <p className="text-gray-500">O ranking será exibido após a finalização da primeira rodada</p>
               </div>
             ) : (
-              <div className="bg-white rounded-xl shadow-sm border overflow-hidden">
-                <div className="bg-gradient-to-r from-green-600 to-green-700 text-white p-4">
-                  <h3 className="font-bold text-lg">
-                    {rounds.find(r => r.id === selectedRankingRound)?.name}
-                  </h3>
-                </div>
-                <table className="w-full">
-                  <thead className="bg-gray-50 border-b">
-                    <tr>
-                      <th className="px-6 py-4 text-left text-xs font-medium text-gray-500 uppercase">Posição</th>
-                      <th className="px-6 py-4 text-left text-xs font-medium text-gray-500 uppercase">Participante</th>
-                      <th className="px-6 py-4 text-center text-xs font-medium text-gray-500 uppercase">Palpites</th>
-                      <th className="px-6 py-4 text-center text-xs font-medium text-gray-500 uppercase">Pontos</th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y">
-                    {ranking.map((item, index) => (
-                      <tr key={item.user.id} className={item.user.id === currentUser.id ? 'bg-green-50' : ''}>
-                        <td className="px-6 py-4">
-                          <div className="flex items-center gap-2">
-                            {index === 0 && <Trophy className="text-yellow-500" size={20} />}
-                            {index === 1 && <Trophy className="text-gray-400" size={20} />}
-                            {index === 2 && <Trophy className="text-orange-600" size={20} />}
-                            <span className="text-lg font-bold">{index + 1}º</span>
+              <div className="space-y-6">
+                {/* Premiação */}
+                {roundPrize && roundPrize.winners.length > 0 && (
+                  <div className="bg-gradient-to-br from-yellow-400 via-yellow-500 to-orange-500 rounded-xl p-8 text-white">
+                    <div className="flex items-center gap-3 mb-6">
+                      <Trophy size={48} />
+                      <div>
+                        <h3 className="text-3xl font-bold">Premiação</h3>
+                        <p className="text-yellow-100">
+                          {roundPrize.winners.length > 1 ? `${roundPrize.winners.length} Vencedores (Empate)` : 'Campeão da Rodada'}
+                        </p>
+                      </div>
+                    </div>
+
+                    <div className="bg-white bg-opacity-20 rounded-xl p-6 mb-6">
+                      <div className="text-center">
+                        <p className="text-yellow-100 text-sm font-medium">PRÊMIO {roundPrize.winners.length > 1 ? 'POR VENCEDOR' : 'TOTAL'}</p>
+                        <p className="text-5xl font-bold mt-2">R$ {roundPrize.prizePerWinner.toFixed(2)}</p>
+                        <p className="text-yellow-100 text-sm mt-2">
+                          Total arrecadado: R$ {roundPrize.totalPaid.toFixed(2)} | Premiação (90%): R$ {roundPrize.prizePool.toFixed(2)}
+                        </p>
+                      </div>
+                    </div>
+
+                    <div className="space-y-3">
+                      {roundPrize.winners.map((winner) => (
+                        <div key={winner.user.id} className="bg-white rounded-lg p-4 text-gray-900 flex justify-between items-center">
+                          <div className="flex items-center gap-3">
+                            <Trophy className="text-yellow-500" size={32} />
+                            <div>
+                              <p className="font-bold text-xl">{winner.user.name}</p>
+                              <p className="text-sm text-gray-600">{winner.user.whatsapp}</p>
+                            </div>
                           </div>
-                        </td>
-                        <td className="px-6 py-4">
-                          <span className="font-medium">{item.user.name}</span>
-                          {item.user.id === currentUser.id && (
-                            <span className="ml-2 bg-green-600 text-white text-xs px-2 py-1 rounded-full">Você</span>
-                          )}
-                        </td>
-                        <td className="px-6 py-4 text-center">
-                          <span className={item.predictions === 0 ? 'text-red-600 font-medium' : ''}>
-                            {item.predictions}
-                          </span>
-                        </td>
-                        <td className="px-6 py-4 text-center">
-                          <span className="text-xl font-bold text-green-600">{item.points}</span>
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-                
-                {ranking.length === 0 && (
-                  <div className="p-12 text-center">
-                    <Users className="mx-auto text-gray-400 mb-4" size={48} />
-                    <h3 className="text-xl font-semibold mb-2">Nenhum participante ainda</h3>
+                          <div className="text-right">
+                            <p className="text-3xl font-bold text-green-600">{winner.points} pts</p>
+                            <p className="text-lg font-bold text-green-700">+ R$ {roundPrize.prizePerWinner.toFixed(2)}</p>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+
+                    {roundPrize.winners.length > 1 && (
+                      <div className="bg-white bg-opacity-20 rounded-xl p-4 text-center mt-4">
+                        <p className="text-sm">⚠️ Empate detectado! Premiação dividida igualmente.</p>
+                      </div>
+                    )}
                   </div>
                 )}
+
+                {/* Tabela de Ranking */}
+                <div className="bg-white rounded-xl shadow-sm border overflow-hidden">
+                  <div className="bg-gradient-to-r from-green-600 to-green-700 text-white p-4">
+                    <h3 className="font-bold text-lg">
+                      {rounds.find(r => r.id === selectedRankingRound)?.name}
+                    </h3>
+                    <p className="text-sm text-green-100 mt-1">⚠️ Apenas palpites pagos são contabilizados</p>
+                  </div>
+                  <table className="w-full">
+                    <thead className="bg-gray-50 border-b">
+                      <tr>
+                        <th className="px-6 py-4 text-left text-xs font-medium text-gray-500 uppercase">Posição</th>
+                        <th className="px-6 py-4 text-left text-xs font-medium text-gray-500 uppercase">Participante</th>
+                        <th className="px-6 py-4 text-center text-xs font-medium text-gray-500 uppercase">Palpites</th>
+                        <th className="px-6 py-4 text-center text-xs font-medium text-gray-500 uppercase">Pontos</th>
+                        <th className="px-6 py-4 text-center text-xs font-medium text-gray-500 uppercase">Premiação</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y">
+                      {ranking.map((item, index) => {
+                        const isWinner = roundPrize && roundPrize.winners.some(w => w.user.id === item.user.id);
+                        const position = isWinner && roundPrize.winners.length > 1 ? 1 : index + 1;
+                        
+                        return (
+                          <tr key={item.user.id} className={`${item.user.id === currentUser.id ? 'bg-green-50' : ''} ${isWinner ? 'bg-yellow-50' : ''}`}>
+                            <td className="px-6 py-4">
+                              <div className="flex items-center gap-2">
+                                {position === 1 && <Trophy className="text-yellow-500" size={20} />}
+                                {position === 2 && !isWinner && <Trophy className="text-gray-400" size={20} />}
+                                {position === 3 && !isWinner && <Trophy className="text-orange-600" size={20} />}
+                                <span className="text-lg font-bold">{position}º</span>
+                              </div>
+                            </td>
+                            <td className="px-6 py-4">
+                              <span className="font-medium">{item.user.name}</span>
+                              {item.user.id === currentUser.id && (
+                                <span className="ml-2 bg-green-600 text-white text-xs px-2 py-1 rounded-full">Você</span>
+                              )}
+                              {isWinner && (
+                                <span className="ml-2 bg-yellow-500 text-white text-xs px-2 py-1 rounded-full">🏆 Vencedor</span>
+                              )}
+                            </td>
+                            <td className="px-6 py-4 text-center">{item.predictions}</td>
+                            <td className="px-6 py-4 text-center">
+                              <span className="text-xl font-bold text-green-600">{item.points}</span>
+                            </td>
+                            <td className="px-6 py-4 text-center">
+                              {isWinner && roundPrize ? (
+                                <span className="text-lg font-bold text-green-600">R$ {roundPrize.prizePerWinner.toFixed(2)}</span>
+                              ) : (
+                                <span className="text-gray-400">-</span>
+                              )}
+                            </td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                  
+                  {ranking.length === 0 && (
+                    <div className="p-12 text-center">
+                      <Users className="mx-auto text-gray-400 mb-4" size={48} />
+                      <h3 className="text-xl font-semibold mb-2">Nenhum participante pagou ainda</h3>
+                      <p className="text-gray-500">Apenas participantes com pagamento confirmado aparecem no ranking</p>
+                    </div>
+                  )}
+                </div>
               </div>
             )}
           </div>
