@@ -130,6 +130,7 @@ const AppProvider = ({ children }) => {
     currentUser, setCurrentUser, users, teams, rounds, predictions, loading,
     addUser: async (d) => { const r = await addDoc(collection(db, 'users'), { ...d, createdAt: serverTimestamp() }); return { id: r.id, ...d }; },
     updateUser: async (id, d) => await updateDoc(doc(db, 'users', id), d),
+    deleteUser: async (id) => await deleteDoc(doc(db, 'users', id)),
     addTeam: async (d) => { const r = await addDoc(collection(db, 'teams'), { ...d, createdAt: serverTimestamp() }); return { id: r.id, ...d }; },
     updateTeam: async (id, d) => await updateDoc(doc(db, 'teams', id), d),
     deleteTeam: async (id) => await deleteDoc(doc(db, 'teams', id)),
@@ -495,13 +496,31 @@ const PasswordModal = ({ user, onSave, onCancel }) => {
 };
 
 const AdminPanel = ({ setView }) => {
-  const { currentUser, setCurrentUser, teams, rounds, users, predictions, addRound, updateRound, deleteRound, addTeam, updateTeam, deleteTeam, updateUser, resetTeamsToSerieA2025 } = useApp();
+  const { currentUser, setCurrentUser, teams, rounds, users, predictions, addRound, updateRound, deleteRound, addTeam, updateTeam, deleteTeam, updateUser, deleteUser, resetTeamsToSerieA2025 } = useApp();
   const [activeTab, setActiveTab] = useState('rounds');
   const [editingRound, setEditingRound] = useState(null);
   const [editingTeam, setEditingTeam] = useState(null);
   const [showRoundForm, setShowRoundForm] = useState(false);
   const [showTeamForm, setShowTeamForm] = useState(false);
   const [editingPassword, setEditingPassword] = useState(null);
+
+  const handleDeleteUser = async (user) => {
+    if (!confirm(`⚠️ ATENÇÃO!\n\nDeseja realmente excluir o usuário "${user.name}"?\n\nIsso também excluirá todos os palpites deste usuário!\n\nEsta ação não pode ser desfeita.`)) {
+      return;
+    }
+    try {
+      // Excluir todos os palpites do usuário primeiro
+      const userPredictions = predictions.filter(p => p.userId === user.id);
+      for (const pred of userPredictions) {
+        await deleteDoc(doc(db, 'predictions', pred.id));
+      }
+      // Depois excluir o usuário
+      await deleteUser(user.id);
+      alert('✅ Usuário excluído com sucesso!');
+    } catch (error) {
+      alert('❌ Erro ao excluir usuário: ' + error.message);
+    }
+  };
 
   const handleResetTeams = async () => {
     if (!confirm('⚠️ ATENÇÃO!\n\nIsso irá DELETAR todos os times cadastrados e recarregar apenas os 20 times oficiais da Série A 2025.\n\n⚠️ CUIDADO: Se houver rodadas criadas com times antigos, elas podem ficar quebradas!\n\nDeseja continuar?')) {
@@ -738,6 +757,13 @@ const AdminPanel = ({ setView }) => {
                           <Key size={18} />
                           <span className="hidden sm:inline">Senha</span>
                         </button>
+                        <button 
+                          onClick={() => handleDeleteUser(user)} 
+                          className="flex items-center gap-2 bg-red-100 text-red-700 px-4 py-2 rounded-lg hover:bg-red-200 transition"
+                        >
+                          <Trash2 size={18} />
+                          <span className="hidden sm:inline">Excluir</span>
+                        </button>
                       </div>
                     </div>
                   </div>
@@ -762,6 +788,7 @@ const UserPanel = ({ setView }) => {
   const [showConfirmModal, setShowConfirmModal] = useState(false);
   const [pendingPredictions, setPendingPredictions] = useState(null);
   const [expandedRounds, setExpandedRounds] = useState({});
+  const [selectedRankingRound, setSelectedRankingRound] = useState(null);
 
   const toggleRound = (roundId) => {
     setExpandedRounds(prev => ({ ...prev, [roundId]: !prev[roundId] }));
@@ -771,6 +798,13 @@ const UserPanel = ({ setView }) => {
   const closedRounds = rounds.filter(r => r.status === 'closed').sort((a, b) => b.number - a.number);
   const finishedRounds = rounds.filter(r => r.status === 'finished').sort((a, b) => b.number - a.number);
   const upcomingRounds = rounds.filter(r => r.status === 'upcoming').sort((a, b) => a.number - b.number);
+
+  // Inicializar com a primeira rodada finalizada
+  useEffect(() => {
+    if (!selectedRankingRound && finishedRounds.length > 0) {
+      setSelectedRankingRound(finishedRounds[0].id);
+    }
+  }, [finishedRounds]);
 
   const getRoundPredictions = (roundId) => {
     return predictions.filter(p => p.userId === currentUser.id && p.roundId === roundId);
@@ -1152,39 +1186,55 @@ const UserPanel = ({ setView }) => {
     .filter(r => r.status === 'finished')
     .reduce((sum, round) => sum + (calculateRoundPoints(round.id) || 0), 0);
   
-  const ranking = users.filter(u => !u.isAdmin).map(user => {
-    const userPoints = rounds
-      .filter(r => r.status === 'finished')
-      .reduce((sum, round) => {
-        let points = 0;
-        round.matches?.forEach(match => {
-          const pred = predictions.find(p => 
-            p.userId === user.id && 
-            p.roundId === round.id && 
-            p.matchId === match.id
-          );
-          
-          if (pred && match.finished && match.homeScore !== null && match.awayScore !== null) {
-            if (pred.homeScore === match.homeScore && pred.awayScore === match.awayScore) {
-              points += 3;
-            } else {
-              const predResult = pred.homeScore > pred.awayScore ? 'home' : pred.homeScore < pred.awayScore ? 'away' : 'draw';
-              const matchResult = match.homeScore > match.awayScore ? 'home' : match.homeScore < match.awayScore ? 'away' : 'draw';
-              if (predResult === matchResult) {
-                points += 1;
-              }
-            }
-          }
-        });
-        return sum + points;
-      }, 0);
+  // Função para calcular pontos de um usuário em uma rodada específica
+  const calculateUserRoundPoints = (userId, roundId) => {
+    const round = rounds.find(r => r.id === roundId);
+    if (!round || round.status !== 'finished') return 0;
     
-    return {
-      user,
-      totalPoints: userPoints,
-      totalPredictions: predictions.filter(p => p.userId === user.id).length
-    };
-  }).sort((a, b) => b.totalPoints - a.totalPoints);
+    let points = 0;
+    round.matches?.forEach(match => {
+      const pred = predictions.find(p => 
+        p.userId === userId && 
+        p.roundId === roundId && 
+        p.matchId === match.id
+      );
+      
+      if (pred && match.finished && match.homeScore !== null && match.awayScore !== null) {
+        if (pred.homeScore === match.homeScore && pred.awayScore === match.awayScore) {
+          points += 3;
+        } else {
+          const predResult = pred.homeScore > pred.awayScore ? 'home' : pred.homeScore < pred.awayScore ? 'away' : 'draw';
+          const matchResult = match.homeScore > match.awayScore ? 'home' : match.homeScore < match.awayScore ? 'away' : 'draw';
+          if (predResult === matchResult) {
+            points += 1;
+          }
+        }
+      }
+    });
+    return points;
+  };
+  
+  // Ranking por rodada específica
+  const getRankingForRound = (roundId) => {
+    if (!roundId) return [];
+    
+    return users.filter(u => !u.isAdmin).map(user => {
+      const userPoints = calculateUserRoundPoints(user.id, roundId);
+      const userRoundPreds = predictions.filter(p => p.userId === user.id && p.roundId === roundId);
+      
+      return {
+        user,
+        points: userPoints,
+        predictions: userRoundPreds.length
+      };
+    }).sort((a, b) => {
+      // Ordena por pontos, se empate ordena por quem tem mais palpites
+      if (b.points !== a.points) return b.points - a.points;
+      return b.predictions - a.predictions;
+    });
+  };
+  
+  const ranking = selectedRankingRound ? getRankingForRound(selectedRankingRound) : [];
 
   return (
     <div className="min-h-screen bg-gray-50">
@@ -1283,39 +1333,90 @@ const UserPanel = ({ setView }) => {
 
         {activeTab === 'ranking' && (
           <div>
-            <h2 className="text-2xl font-bold mb-6">Classificação Geral</h2>
-            <div className="bg-white rounded-xl shadow-sm border overflow-hidden">
-              <table className="w-full">
-                <thead className="bg-gray-50 border-b">
-                  <tr>
-                    <th className="px-6 py-4 text-left text-xs font-medium text-gray-500 uppercase">Posição</th>
-                    <th className="px-6 py-4 text-left text-xs font-medium text-gray-500 uppercase">Participante</th>
-                    <th className="px-6 py-4 text-center text-xs font-medium text-gray-500 uppercase">Palpites</th>
-                    <th className="px-6 py-4 text-center text-xs font-medium text-gray-500 uppercase">Pontos</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y">
-                  {ranking.map((item, index) => (
-                    <tr key={item.user.id} className={item.user.id === currentUser.id ? 'bg-green-50' : ''}>
-                      <td className="px-6 py-4">
-                        <div className="flex items-center gap-2">
-                          {index === 0 && <Trophy className="text-yellow-500" size={20} />}
-                          {index === 1 && <Trophy className="text-gray-400" size={20} />}
-                          {index === 2 && <Trophy className="text-orange-600" size={20} />}
-                          <span className="text-lg font-bold">{index + 1}º</span>
-                        </div>
-                      </td>
-                      <td className="px-6 py-4">
-                        <span className="font-medium">{item.user.name}</span>
-                        {item.user.id === currentUser.id && <span className="ml-2 bg-green-600 text-white text-xs px-2 py-1 rounded-full">Você</span>}
-                      </td>
-                      <td className="px-6 py-4 text-center">{item.totalPredictions}</td>
-                      <td className="px-6 py-4 text-center"><span className="text-xl font-bold text-green-600">{item.totalPoints}</span></td>
-                    </tr>
+            <div className="flex justify-between items-start mb-6">
+              <div>
+                <h2 className="text-2xl font-bold">Ranking</h2>
+                <p className="text-gray-600 mt-1">Classificação por rodada</p>
+              </div>
+              <div className="w-64">
+                <label className="block text-sm font-medium mb-2">Selecione a Rodada</label>
+                <select
+                  value={selectedRankingRound || ''}
+                  onChange={(e) => setSelectedRankingRound(e.target.value)}
+                  className="w-full px-4 py-2 border rounded-lg bg-white"
+                >
+                  {finishedRounds.length === 0 && (
+                    <option value="">Nenhuma rodada finalizada</option>
+                  )}
+                  {finishedRounds.map(round => (
+                    <option key={round.id} value={round.id}>
+                      {round.name}
+                    </option>
                   ))}
-                </tbody>
-              </table>
+                </select>
+              </div>
             </div>
+
+            {!selectedRankingRound || finishedRounds.length === 0 ? (
+              <div className="bg-white rounded-xl p-12 text-center border-2 border-dashed">
+                <Trophy className="mx-auto text-gray-400 mb-4" size={48} />
+                <h3 className="text-xl font-semibold mb-2">Nenhuma rodada finalizada</h3>
+                <p className="text-gray-500">O ranking será exibido após a finalização da primeira rodada</p>
+              </div>
+            ) : (
+              <div className="bg-white rounded-xl shadow-sm border overflow-hidden">
+                <div className="bg-gradient-to-r from-green-600 to-green-700 text-white p-4">
+                  <h3 className="font-bold text-lg">
+                    {rounds.find(r => r.id === selectedRankingRound)?.name}
+                  </h3>
+                </div>
+                <table className="w-full">
+                  <thead className="bg-gray-50 border-b">
+                    <tr>
+                      <th className="px-6 py-4 text-left text-xs font-medium text-gray-500 uppercase">Posição</th>
+                      <th className="px-6 py-4 text-left text-xs font-medium text-gray-500 uppercase">Participante</th>
+                      <th className="px-6 py-4 text-center text-xs font-medium text-gray-500 uppercase">Palpites</th>
+                      <th className="px-6 py-4 text-center text-xs font-medium text-gray-500 uppercase">Pontos</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y">
+                    {ranking.map((item, index) => (
+                      <tr key={item.user.id} className={item.user.id === currentUser.id ? 'bg-green-50' : ''}>
+                        <td className="px-6 py-4">
+                          <div className="flex items-center gap-2">
+                            {index === 0 && <Trophy className="text-yellow-500" size={20} />}
+                            {index === 1 && <Trophy className="text-gray-400" size={20} />}
+                            {index === 2 && <Trophy className="text-orange-600" size={20} />}
+                            <span className="text-lg font-bold">{index + 1}º</span>
+                          </div>
+                        </td>
+                        <td className="px-6 py-4">
+                          <span className="font-medium">{item.user.name}</span>
+                          {item.user.id === currentUser.id && (
+                            <span className="ml-2 bg-green-600 text-white text-xs px-2 py-1 rounded-full">Você</span>
+                          )}
+                        </td>
+                        <td className="px-6 py-4 text-center">
+                          <span className={item.predictions === 0 ? 'text-red-600 font-medium' : ''}>
+                            {item.predictions}
+                          </span>
+                        </td>
+                        <td className="px-6 py-4 text-center">
+                          <span className="text-xl font-bold text-green-600">{item.points}</span>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+                
+                {ranking.length === 0 && (
+                  <div className="p-12 text-center">
+                    <Users className="mx-auto text-gray-400 mb-4" size={48} />
+                    <h3 className="text-xl font-semibold mb-2">Nenhum participante ainda</h3>
+                  </div>
+                )}
+              </div>
+            )}
           </div>
         )}
 
