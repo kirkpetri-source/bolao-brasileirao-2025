@@ -1,5 +1,5 @@
 import React, { useState, useEffect, createContext, useContext } from 'react';
-import { Trophy, Users, Calendar, TrendingUp, LogOut, Eye, EyeOff, Plus, Edit2, Trash2, Upload, ExternalLink, X, UserPlus, Target, Award, ChevronDown, ChevronUp, Check, Key, DollarSign, CheckCircle, XCircle, AlertCircle, FileText, Download } from 'lucide-react';
+import { Trophy, Users, Calendar, TrendingUp, LogOut, Eye, EyeOff, Plus, Edit2, Trash2, Upload, ExternalLink, X, UserPlus, Target, Award, ChevronDown, ChevronUp, Check, Key, DollarSign, CheckCircle, XCircle, AlertCircle, FileText, Download, Store, Filter } from 'lucide-react';
 import { initializeApp } from 'firebase/app';
 import { getFirestore, collection, addDoc, updateDoc, deleteDoc, doc, getDocs, onSnapshot, serverTimestamp } from 'firebase/firestore';
 
@@ -14,6 +14,12 @@ const firebaseConfig = {
 
 const app = initializeApp(firebaseConfig);
 const db = getFirestore(app);
+
+const generateCartelaCode = () => {
+  const timestamp = Date.now().toString(36).toUpperCase();
+  const random = Math.random().toString(36).substring(2, 6).toUpperCase();
+  return `CART-${timestamp}-${random}`;
+};
 
 const AppContext = createContext();
 const useApp = () => useContext(AppContext);
@@ -69,10 +75,9 @@ const initializeDatabase = async () => {
       await addDoc(collection(db, 'teams'), { ...team, createdAt: serverTimestamp() });
     }
 
-    // Criar configurações padrão
     if (settingsSnapshot.empty) {
       await addDoc(collection(db, 'settings'), {
-        whatsappMessage: '🏆 *BOLÃO BRASILEIRÃO 2025*\n\n📋 *{RODADA}*\n✅ Confirmado!\n\n{PALPITES}\n\n💰 R$ 15,00\n⚠️ *Não pode alterar após pagamento*\n\nBoa sorte! 🍀',
+        whatsappMessage: '🏆 *BOLÃO BRASILEIRÃO 2025*\n\n📋 *{RODADA}*\n🎫 *Cartela: {CARTELA}*\n✅ Confirmado!\n\n{PALPITES}\n\n💰 R$ 15,00\n⚠️ *Não pode alterar após pagamento*\n\nBoa sorte! 🍀',
         createdAt: serverTimestamp()
       });
     }
@@ -83,7 +88,7 @@ const initializeDatabase = async () => {
   }
 };
 
-const sendWhatsAppMessage = (userPhone, roundName, predictions, teams, messageTemplate) => {
+const sendWhatsAppMessage = (userPhone, roundName, predictions, teams, messageTemplate, cartelaCode) => {
   let palpitesText = '';
   predictions.forEach((pred, i) => {
     const homeTeam = teams.find(t => t.id === pred.match.homeTeamId);
@@ -91,8 +96,9 @@ const sendWhatsAppMessage = (userPhone, roundName, predictions, teams, messageTe
     palpitesText += `${i + 1}. ${homeTeam?.name} ${pred.homeScore} x ${pred.awayScore} ${awayTeam?.name}\n`;
   });
   
-  const message = (messageTemplate || '🏆 *BOLÃO BRASILEIRÃO 2025*\n\n📋 *{RODADA}*\n✅ Confirmado!\n\n{PALPITES}\n\n💰 R$ 15,00\n⚠️ *Não pode alterar após pagamento*\n\nBoa sorte! 🍀')
+  const message = (messageTemplate || '🏆 *BOLÃO BRASILEIRÃO 2025*\n\n📋 *{RODADA}*\n🎫 *Cartela: {CARTELA}*\n✅ Confirmado!\n\n{PALPITES}\n\n💰 R$ 15,00\n⚠️ *Não pode alterar após pagamento*\n\nBoa sorte! 🍀')
     .replace('{RODADA}', roundName)
+    .replace('{CARTELA}', cartelaCode)
     .replace('{PALPITES}', palpitesText.trim());
   
   window.open(`https://wa.me/${userPhone.replace(/\D/g, '')}?text=${encodeURIComponent(message)}`, '_blank');
@@ -104,6 +110,7 @@ const AppProvider = ({ children }) => {
   const [teams, setTeams] = useState([]);
   const [rounds, setRounds] = useState([]);
   const [predictions, setPredictions] = useState([]);
+  const [establishments, setEstablishments] = useState([]);
   const [settings, setSettings] = useState(null);
   const [loading, setLoading] = useState(true);
 
@@ -111,17 +118,19 @@ const AppProvider = ({ children }) => {
     const loadData = async () => {
       try {
         await initializeDatabase();
-        const [u, t, r, p, s] = await Promise.all([
+        const [u, t, r, p, s, e] = await Promise.all([
           getDocs(collection(db, 'users')),
           getDocs(collection(db, 'teams')),
           getDocs(collection(db, 'rounds')),
           getDocs(collection(db, 'predictions')),
-          getDocs(collection(db, 'settings'))
+          getDocs(collection(db, 'settings')),
+          getDocs(collection(db, 'establishments'))
         ]);
         setUsers(u.docs.map(d => ({ id: d.id, ...d.data() })));
         setTeams(t.docs.map(d => ({ id: d.id, ...d.data() })).sort((a, b) => a.name.localeCompare(b.name)));
         setRounds(r.docs.map(d => ({ id: d.id, ...d.data() })));
         setPredictions(p.docs.map(d => ({ id: d.id, ...d.data() })));
+        setEstablishments(e.docs.map(d => ({ id: d.id, ...d.data() })));
         setSettings(s.docs.length > 0 ? { id: s.docs[0].id, ...s.docs[0].data() } : null);
       } catch (error) {
         console.error('Load error:', error);
@@ -138,13 +147,14 @@ const AppProvider = ({ children }) => {
       onSnapshot(collection(db, 'teams'), s => setTeams(s.docs.map(d => ({ id: d.id, ...d.data() })).sort((a, b) => a.name.localeCompare(b.name)))),
       onSnapshot(collection(db, 'predictions'), s => setPredictions(s.docs.map(d => ({ id: d.id, ...d.data() })))),
       onSnapshot(collection(db, 'users'), s => setUsers(s.docs.map(d => ({ id: d.id, ...d.data() })))),
+      onSnapshot(collection(db, 'establishments'), s => setEstablishments(s.docs.map(d => ({ id: d.id, ...d.data() })))),
       onSnapshot(collection(db, 'settings'), s => setSettings(s.docs.length > 0 ? { id: s.docs[0].id, ...s.docs[0].data() } : null))
     ];
     return () => uns.forEach(u => u());
   }, []);
 
   const value = {
-    currentUser, setCurrentUser, users, teams, rounds, predictions, settings, loading,
+    currentUser, setCurrentUser, users, teams, rounds, predictions, establishments, settings, loading,
     addUser: async (d) => { const r = await addDoc(collection(db, 'users'), { ...d, createdAt: serverTimestamp() }); return { id: r.id, ...d }; },
     updateUser: async (id, d) => await updateDoc(doc(db, 'users', id), d),
     deleteUser: async (id) => await deleteDoc(doc(db, 'users', id)),
@@ -169,8 +179,19 @@ const AppProvider = ({ children }) => {
     addRound: async (d) => { const r = await addDoc(collection(db, 'rounds'), { ...d, createdAt: serverTimestamp() }); return { id: r.id, ...d }; },
     updateRound: async (id, d) => await updateDoc(doc(db, 'rounds', id), d),
     deleteRound: async (id) => await deleteDoc(doc(db, 'rounds', id)),
-    addPrediction: async (d) => { const r = await addDoc(collection(db, 'predictions'), { ...d, paid: false, createdAt: serverTimestamp() }); return { id: r.id, ...d }; },
+    addPrediction: async (d) => { 
+      const r = await addDoc(collection(db, 'predictions'), { 
+        ...d, 
+        paid: false, 
+        cartelaCode: d.cartelaCode || generateCartelaCode(),
+        createdAt: serverTimestamp() 
+      }); 
+      return { id: r.id, ...d }; 
+    },
     updatePrediction: async (id, d) => await updateDoc(doc(db, 'predictions', id), d),
+    addEstablishment: async (d) => { const r = await addDoc(collection(db, 'establishments'), { ...d, createdAt: serverTimestamp() }); return { id: r.id, ...d }; },
+    updateEstablishment: async (id, d) => await updateDoc(doc(db, 'establishments', id), d),
+    deleteEstablishment: async (id) => await deleteDoc(doc(db, 'establishments', id)),
     updateSettings: async (d) => {
       if (settings?.id) {
         await updateDoc(doc(db, 'settings', settings.id), d);
@@ -281,6 +302,52 @@ const LoginScreen = ({ setView }) => {
           <button onClick={() => { setShowRegister(true); setError(''); }} className="w-full border-2 border-green-600 text-green-600 py-3 rounded-lg font-semibold flex items-center justify-center gap-2">
             <UserPlus size={20} /> Criar Conta
           </button>
+        </div>
+      </div>
+    </div>
+  );
+};
+
+const EstablishmentForm = ({ establishment, onSave, onCancel }) => {
+  const [formData, setFormData] = useState(establishment || { name: '', contact: '', phone: '', commission: 5 });
+
+  const handleSave = () => {
+    if (!formData.name) {
+      alert('Preencha o nome do estabelecimento!');
+      return;
+    }
+    onSave(formData);
+  };
+
+  return (
+    <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
+      <div className="bg-white rounded-xl max-w-md w-full">
+        <div className="p-6 border-b flex justify-between items-center">
+          <h3 className="text-2xl font-bold">{establishment ? 'Editar' : 'Novo'} Estabelecimento</h3>
+          <button onClick={onCancel}><X size={24} /></button>
+        </div>
+        <div className="p-6 space-y-4">
+          <div>
+            <label className="block text-sm font-medium mb-2">Nome do Estabelecimento *</label>
+            <input type="text" value={formData.name} onChange={(e) => setFormData({ ...formData, name: e.target.value })} className="w-full px-4 py-2 border rounded-lg" placeholder="Ex: Bar do João" />
+          </div>
+          <div>
+            <label className="block text-sm font-medium mb-2">Contato (Nome)</label>
+            <input type="text" value={formData.contact} onChange={(e) => setFormData({ ...formData, contact: e.target.value })} className="w-full px-4 py-2 border rounded-lg" placeholder="Ex: João Silva" />
+          </div>
+          <div>
+            <label className="block text-sm font-medium mb-2">Telefone/WhatsApp</label>
+            <input type="tel" value={formData.phone} onChange={(e) => setFormData({ ...formData, phone: e.target.value })} className="w-full px-4 py-2 border rounded-lg" placeholder="Ex: 11999999999" />
+          </div>
+          <div>
+            <label className="block text-sm font-medium mb-2">Comissão (%)</label>
+            <input type="number" min="0" max="100" step="0.5" value={formData.commission} onChange={(e) => setFormData({ ...formData, commission: parseFloat(e.target.value) })} className="w-full px-4 py-2 border rounded-lg" />
+            <p className="text-xs text-gray-500 mt-1">Padrão: 5%</p>
+          </div>
+        </div>
+        <div className="p-6 border-t flex gap-3">
+          <button onClick={onCancel} className="flex-1 px-6 py-2 border rounded-lg">Cancelar</button>
+          <button onClick={handleSave} className="flex-1 px-6 py-2 bg-green-600 text-white rounded-lg">Salvar</button>
         </div>
       </div>
     </div>
@@ -519,16 +586,19 @@ const PasswordModal = ({ user, onSave, onCancel }) => {
 };
 
 const AdminPanel = ({ setView }) => {
-  const { currentUser, setCurrentUser, teams, rounds, users, predictions, settings, addRound, updateRound, deleteRound, addTeam, updateTeam, deleteTeam, updateUser, deleteUser, resetTeamsToSerieA2025, updatePrediction, updateSettings } = useApp();
+  const { currentUser, setCurrentUser, teams, rounds, users, predictions, establishments, settings, addRound, updateRound, deleteRound, addTeam, updateTeam, deleteTeam, updateUser, deleteUser, resetTeamsToSerieA2025, updatePrediction, updateSettings, addEstablishment, updateEstablishment, deleteEstablishment } = useApp();
   const [activeTab, setActiveTab] = useState('dashboard');
   const [editingRound, setEditingRound] = useState(null);
   const [editingTeam, setEditingTeam] = useState(null);
+  const [editingEstablishment, setEditingEstablishment] = useState(null);
   const [showRoundForm, setShowRoundForm] = useState(false);
   const [showTeamForm, setShowTeamForm] = useState(false);
+  const [showEstablishmentForm, setShowEstablishmentForm] = useState(false);
   const [editingPassword, setEditingPassword] = useState(null);
   const [selectedFinanceRound, setSelectedFinanceRound] = useState(null);
   const [selectedDashboardRound, setSelectedDashboardRound] = useState(null);
   const [paymentFilter, setPaymentFilter] = useState('all');
+  const [establishmentFilter, setEstablishmentFilter] = useState('all');
   const [whatsappMessage, setWhatsappMessage] = useState(settings?.whatsappMessage || '');
 
   useEffect(() => {
@@ -537,7 +607,6 @@ const AdminPanel = ({ setView }) => {
     }
   }, [settings]);
 
-  // Inicializar dashboard com a primeira rodada finalizada
   useEffect(() => {
     if (!selectedDashboardRound) {
       const finishedRounds = rounds.filter(r => r.status === 'finished').sort((a, b) => b.number - a.number);
@@ -552,12 +621,10 @@ const AdminPanel = ({ setView }) => {
       return;
     }
     try {
-      // Excluir todos os palpites do usuário primeiro
       const userPredictions = predictions.filter(p => p.userId === user.id);
       for (const pred of userPredictions) {
         await deleteDoc(doc(db, 'predictions', pred.id));
       }
-      // Depois excluir o usuário
       await deleteUser(user.id);
       alert('✅ Usuário excluído com sucesso!');
     } catch (error) {
@@ -565,52 +632,94 @@ const AdminPanel = ({ setView }) => {
     }
   };
 
-  const togglePaymentStatus = async (userId, roundId) => {
+  const togglePaymentStatus = async (userId, roundId, cartelaCode) => {
     try {
-      // Encontrar a primeira predição do usuário nesta rodada
-      const userRoundPrediction = predictions.find(p => p.userId === userId && p.roundId === roundId);
+      const cartelaPredictions = predictions.filter(p => 
+        p.userId === userId && 
+        p.roundId === roundId && 
+        (p.cartelaCode || 'ANTIGA') === cartelaCode
+      );
       
-      if (userRoundPrediction) {
-        const newPaidStatus = !userRoundPrediction.paid;
-        
-        // Atualizar TODAS as predições do usuário nesta rodada
-        const allUserRoundPredictions = predictions.filter(p => p.userId === userId && p.roundId === roundId);
-        for (const pred of allUserRoundPredictions) {
-          await updatePrediction(pred.id, { paid: newPaidStatus });
-        }
+      if (cartelaPredictions.length === 0) return;
+      
+      const newPaidStatus = !cartelaPredictions[0].paid;
+      
+      for (const pred of cartelaPredictions) {
+        await updatePrediction(pred.id, { paid: newPaidStatus });
       }
     } catch (error) {
       alert('Erro ao atualizar pagamento: ' + error.message);
     }
   };
 
-  const getPaymentStatus = (userId, roundId) => {
+  const getPaymentStatus = (userId, roundId, cartelaCode = null) => {
+    if (cartelaCode) {
+      const cartela = predictions.find(p => 
+        p.userId === userId && 
+        p.roundId === roundId && 
+        (p.cartelaCode || 'ANTIGA') === cartelaCode
+      );
+      return cartela?.paid || false;
+    }
+    
     const userRoundPrediction = predictions.find(p => p.userId === userId && p.roundId === roundId);
     return userRoundPrediction?.paid || false;
   };
 
   const getRoundParticipants = (roundId) => {
-    const participantIds = [...new Set(predictions.filter(p => p.roundId === roundId).map(p => p.userId))];
-    return users.filter(u => !u.isAdmin && participantIds.includes(u.id));
+    const participantData = {};
+    
+    predictions.filter(p => p.roundId === roundId).forEach(pred => {
+      const key = `${pred.userId}-${pred.cartelaCode || 'ANTIGA'}`;
+      if (!participantData[key]) {
+        participantData[key] = {
+          userId: pred.userId,
+          cartelaCode: pred.cartelaCode || 'ANTIGA',
+          establishmentId: pred.establishmentId || null,
+          paid: pred.paid || false
+        };
+      }
+    });
+    
+    return Object.values(participantData);
   };
 
-  const getRoundFinancialSummary = (roundId) => {
-    const participants = getRoundParticipants(roundId);
-    const totalParticipants = participants.length;
-    const paidCount = participants.filter(u => getPaymentStatus(u.id, roundId)).length;
-    const pendingCount = totalParticipants - paidCount;
-    const totalExpected = totalParticipants * 15;
+  const getRoundFinancialSummary = (roundId, filterEstablishmentId = null) => {
+    let participants = getRoundParticipants(roundId);
+    
+    if (filterEstablishmentId && filterEstablishmentId !== 'all') {
+      participants = participants.filter(p => p.establishmentId === filterEstablishmentId);
+    }
+    
+    const totalParticipations = participants.length;
+    const paidCount = participants.filter(p => p.paid).length;
+    const pendingCount = totalParticipations - paidCount;
+    const totalExpected = totalParticipations * 15;
     const totalReceived = paidCount * 15;
     const totalPending = pendingCount * 15;
 
+    // Novo cálculo: 85% premiação, 10% admin, 5% estabelecimento
+    const prizePool = totalReceived * 0.85;
+    const adminFee = totalReceived * 0.10;
+    const establishmentFee = totalReceived * 0.05;
+
     return {
-      totalParticipants,
+      totalParticipations,
       paidCount,
       pendingCount,
       totalExpected,
       totalReceived,
-      totalPending
+      totalPending,
+      prizePool,
+      adminFee,
+      establishmentFee
     };
+  };
+
+  const getEstablishmentCommission = (roundId, establishmentId) => {
+    const estParticipants = getRoundParticipants(roundId).filter(p => p.establishmentId === establishmentId && p.paid);
+    const totalPaid = estParticipants.length * 15;
+    return totalPaid * 0.05; // 5% de comissão
   };
 
   const getTotalFinancialSummary = () => {
@@ -626,15 +735,17 @@ const AdminPanel = ({ setView }) => {
       totalPending += summary.totalPending;
     });
 
-    const prizePool = totalReceived * 0.9; // 90% para premiação
-    const adminFee = totalReceived * 0.1; // 10% taxa administrativa
+    const prizePool = totalReceived * 0.85;
+    const adminFee = totalReceived * 0.10;
+    const establishmentFee = totalReceived * 0.05;
 
     return {
       totalExpected,
       totalReceived,
       totalPending,
       prizePool,
-      adminFee
+      adminFee,
+      establishmentFee
     };
   };
 
@@ -645,21 +756,63 @@ const AdminPanel = ({ setView }) => {
     if (!round || round.status !== 'finished') return null;
 
     const participants = getRoundParticipants(roundId);
-    const paidParticipants = participants.filter(u => getPaymentStatus(u.id, roundId));
+    const paidParticipations = participants.filter(p => p.paid);
     
-    const totalPaid = paidParticipants.length * 15;
-    const prizePool = totalPaid * 0.9;
-    const adminFee = totalPaid * 0.1;
+    const totalPaid = paidParticipations.length * 15;
+    const prizePool = totalPaid * 0.85;
+    const adminFee = totalPaid * 0.10;
+    const establishmentFee = totalPaid * 0.05;
 
-    // Calcular ranking
-    const ranking = paidParticipants.map(user => {
+    const ranking = paidParticipations.map(participant => {
+      const user = users.find(u => u.id === participant.userId);
+      if (!user) return null;
+      
+      const points = calculateUserRoundPoints(participant.userId, roundId, participant.cartelaCode);
+      
+      return { 
+        user, 
+        cartelaCode: participant.cartelaCode,
+        establishmentId: participant.establishmentId,
+        points 
+      };
+    }).filter(Boolean).sort((a, b) => b.points - a.points);
+
+    const maxPoints = ranking.length > 0 ? ranking[0].points : 0;
+    const winners = ranking.filter(r => r.points === maxPoints);
+    const prizePerWinner = winners.length > 0 ? prizePool / winners.length : 0;
+
+    return {
+      round,
+      totalParticipations: participants.length,
+      paidCount: paidParticipations.length,
+      totalPaid,
+      prizePool,
+      adminFee,
+      establishmentFee,
+      winners,
+      prizePerWinner,
+      ranking
+    };
+  };
+
+  const calculateUserRoundPoints = (userId, roundId, cartelaCode = null) => {
+    const round = rounds.find(r => r.id === roundId);
+    if (!round || round.status !== 'finished') return 0;
+    
+    if (cartelaCode) {
+      const cartelaPreds = predictions.filter(p => 
+        p.userId === userId && 
+        p.roundId === roundId && 
+        p.cartelaCode === cartelaCode
+      );
+      
+      if (cartelaPreds.length === 0) return 0;
+      const isPaid = cartelaPreds[0]?.paid;
+      if (!isPaid) return 0;
+      
       let points = 0;
       round.matches?.forEach(match => {
-        const pred = predictions.find(p => 
-          p.userId === user.id && 
-          p.roundId === roundId && 
-          p.matchId === match.id
-        );
+        const pred = cartelaPreds.find(p => p.matchId === match.id);
         
         if (pred && match.finished && match.homeScore !== null && match.awayScore !== null) {
           if (pred.homeScore === match.homeScore && pred.awayScore === match.awayScore) {
@@ -673,65 +826,15 @@ const AdminPanel = ({ setView }) => {
           }
         }
       });
-      
-      return { user, points };
-    }).sort((a, b) => b.points - a.points);
-
-    const maxPoints = ranking.length > 0 ? ranking[0].points : 0;
-    const winners = ranking.filter(r => r.points === maxPoints);
-    const prizePerWinner = winners.length > 0 ? prizePool / winners.length : 0;
-
-    return {
-      round,
-      totalParticipants: participants.length,
-      paidCount: paidParticipants.length,
-      totalPaid,
-      prizePool,
-      adminFee,
-      winners,
-      prizePerWinner,
-      ranking
-    };
-  };
-
-  const getWinners = () => {
-    const finishedRounds = rounds.filter(r => r.status === 'finished');
-    if (finishedRounds.length === 0) return [];
-
-    const userScores = users.filter(u => !u.isAdmin).map(user => {
-      let totalPoints = 0;
-      finishedRounds.forEach(round => {
-        const isPaid = getPaymentStatus(user.id, round.id);
-        if (!isPaid) return; // Só conta se pagou
-
-        round.matches?.forEach(match => {
-          const pred = predictions.find(p => 
-            p.userId === user.id && 
-            p.roundId === round.id && 
-            p.matchId === match.id
-          );
-          
-          if (pred && match.finished && match.homeScore !== null && match.awayScore !== null) {
-            if (pred.homeScore === match.homeScore && pred.awayScore === match.awayScore) {
-              totalPoints += 3;
-            } else {
-              const predResult = pred.homeScore > pred.awayScore ? 'home' : pred.homeScore < pred.awayScore ? 'away' : 'draw';
-              const matchResult = match.homeScore > match.awayScore ? 'home' : match.homeScore < match.awayScore ? 'away' : 'draw';
-              if (predResult === matchResult) {
-                totalPoints += 1;
-              }
-            }
-          }
-        });
-      });
-      
-      return { user, points: totalPoints };
-    });
-
-    const maxPoints = Math.max(...userScores.map(s => s.points));
-    if (maxPoints === 0) return [];
-
-    return userScores.filter(s => s.points === maxPoints);
+      return points;
+    }
+    
+    const userRoundPreds = predictions.filter(p => p.userId === userId && p.roundId === roundId);
+    const cartelaCodes = [...new Set(userRoundPreds.map(p => p.cartelaCode || 'ANTIGA'))];
+    
+    return cartelaCodes.reduce((sum, code) => {
+      return sum + calculateUserRoundPoints(userId, roundId, code);
+    }, 0);
   };
 
   const handleSaveWhatsAppMessage = async () => {
@@ -745,7 +848,6 @@ const AdminPanel = ({ setView }) => {
 
   const generateRoundPDF = async (roundId) => {
     try {
-      // Carregar jsPDF do CDN se ainda não estiver carregado
       if (!window.jspdf) {
         const script = document.createElement('script');
         script.src = 'https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js';
@@ -761,15 +863,13 @@ const AdminPanel = ({ setView }) => {
       if (!round) return;
 
       const allParticipants = getRoundParticipants(roundId);
-      // FILTRAR APENAS QUEM PAGOU
-      const participants = allParticipants.filter(u => getPaymentStatus(u.id, roundId));
+      const participants = allParticipants.filter(p => p.paid);
       
       if (participants.length === 0) {
         alert('⚠️ Nenhum participante com pagamento confirmado nesta rodada!');
         return;
       }
       
-      // Título
       pdf.setFontSize(20);
       pdf.setFont(undefined, 'bold');
       pdf.text('BOLÃO BRASILEIRÃO 2025', 105, 20, { align: 'center' });
@@ -784,38 +884,41 @@ const AdminPanel = ({ setView }) => {
       
       let yPos = 55;
       
-      // Para cada participante que PAGOU
-      participants.forEach((user, index) => {
+      participants.forEach((participant, index) => {
+        const user = users.find(u => u.id === participant.userId);
+        if (!user) return;
+        
+        const establishment = establishments.find(e => e.id === participant.establishmentId);
+        
         if (yPos > 250) {
           pdf.addPage();
           yPos = 20;
         }
 
-        // Nome do participante
         pdf.setFontSize(12);
         pdf.setFont(undefined, 'bold');
         pdf.text(`${index + 1}. ${user.name}`, 20, yPos);
         pdf.setFontSize(9);
         pdf.setFont(undefined, 'normal');
         pdf.text(`WhatsApp: ${user.whatsapp}`, 20, yPos + 5);
+        pdf.text(`Estabelecimento: ${establishment?.name || 'Nenhum'}`, 20, yPos + 10);
         
-        // Status PAGO
         pdf.setTextColor(0, 128, 0);
         pdf.setFont(undefined, 'bold');
         pdf.text('PAGO', 120, yPos + 5);
         pdf.setTextColor(0, 0, 0);
         pdf.setFont(undefined, 'normal');
         
-        yPos += 12;
+        yPos += 17;
 
-        // Palpites do usuário
         round.matches?.forEach((match, mIndex) => {
           const homeTeam = teams.find(t => t.id === match.homeTeamId);
           const awayTeam = teams.find(t => t.id === match.awayTeamId);
           const pred = predictions.find(p => 
             p.userId === user.id && 
             p.roundId === roundId && 
-            p.matchId === match.id
+            p.matchId === match.id &&
+            p.cartelaCode === participant.cartelaCode
           );
 
           if (pred) {
@@ -832,7 +935,6 @@ const AdminPanel = ({ setView }) => {
         yPos += 8;
       });
 
-      // Rodapé
       const pageCount = pdf.internal.getNumberOfPages();
       for (let i = 1; i <= pageCount; i++) {
         pdf.setPage(i);
@@ -842,7 +944,6 @@ const AdminPanel = ({ setView }) => {
         pdf.text(`Página ${i} de ${pageCount}`, 105, 290, { align: 'center' });
       }
 
-      // Salvar PDF
       pdf.save(`Bolao_${round.name.replace(/\s+/g, '_')}_CONFIRMADOS_${new Date().getTime()}.pdf`);
       alert(`✅ PDF gerado com sucesso!\n\n📄 ${participants.length} participantes confirmados (pagos)`);
     } catch (error) {
@@ -891,6 +992,20 @@ const AdminPanel = ({ setView }) => {
     }
   };
 
+  const saveEstablishment = async (estData) => {
+    try {
+      if (editingEstablishment) {
+        await updateEstablishment(editingEstablishment.id, estData);
+      } else {
+        await addEstablishment(estData);
+      }
+      setEditingEstablishment(null);
+      setShowEstablishmentForm(false);
+    } catch (error) {
+      alert('Erro: ' + error.message);
+    }
+  };
+
   const savePassword = async (newPassword) => {
     try {
       await updateUser(editingPassword.id, { password: newPassword });
@@ -906,7 +1021,6 @@ const AdminPanel = ({ setView }) => {
     if (round) {
       await updateRound(id, { ...round, status: newStatus });
       
-      // Se finalizou a rodada, gerar PDF automaticamente
       if (newStatus === 'finished') {
         setTimeout(() => {
           generateRoundPDF(id);
@@ -999,11 +1113,12 @@ const AdminPanel = ({ setView }) => {
       <div className="bg-white border-b">
         <div className="max-w-7xl mx-auto px-4">
           <div className="flex gap-6 overflow-x-auto">
-            {['dashboard', 'rounds', 'teams', 'participants', 'financial', 'settings'].map(tab => (
+            {['dashboard', 'rounds', 'teams', 'establishments', 'participants', 'financial', 'settings'].map(tab => (
               <button key={tab} onClick={() => setActiveTab(tab)} className={`py-4 px-2 border-b-2 font-medium whitespace-nowrap ${activeTab === tab ? 'border-green-600 text-green-600' : 'border-transparent text-gray-500'}`}>
                 {tab === 'dashboard' && <><Trophy className="inline mr-2" size={18} />Dashboard</>}
                 {tab === 'rounds' && <><Calendar className="inline mr-2" size={18} />Rodadas</>}
                 {tab === 'teams' && <><Users className="inline mr-2" size={18} />Times</>}
+                {tab === 'establishments' && <><Store className="inline mr-2" size={18} />Estabelecimentos</>}
                 {tab === 'participants' && <><TrendingUp className="inline mr-2" size={18} />Participantes</>}
                 {tab === 'financial' && <><DollarSign className="inline mr-2" size={18} />Financeiro</>}
                 {tab === 'settings' && <><Edit2 className="inline mr-2" size={18} />Configurações</>}
@@ -1019,7 +1134,7 @@ const AdminPanel = ({ setView }) => {
             <div className="flex justify-between items-start mb-6">
               <div>
                 <h2 className="text-2xl font-bold">Dashboard por Rodada</h2>
-                <p className="text-gray-600 mt-1">Acompanhe resultados e premiação</p>
+                <p className="text-gray-600 mt-1">Acompanhe resultados e premiação (85% ganhador, 10% admin, 5% estabelecimento)</p>
               </div>
               <div className="w-64">
                 <label className="block text-sm font-medium mb-2">Selecione a Rodada</label>
@@ -1053,10 +1168,19 @@ const AdminPanel = ({ setView }) => {
                 );
               }
 
+              const establishmentCommissions = {};
+              dashboardData.ranking.forEach(r => {
+                if (r.establishmentId) {
+                  if (!establishmentCommissions[r.establishmentId]) {
+                    establishmentCommissions[r.establishmentId] = 0;
+                  }
+                  establishmentCommissions[r.establishmentId] += 15 * 0.05;
+                }
+              });
+
               return (
                 <div className="space-y-6">
-                  {/* Resumo Financeiro da Rodada */}
-                  <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+                  <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-4">
                     <div className="bg-blue-50 border-2 border-blue-200 rounded-xl p-6">
                       <div className="flex items-center justify-between mb-3">
                         <DollarSign className="text-blue-500" size={32} />
@@ -1070,7 +1194,7 @@ const AdminPanel = ({ setView }) => {
                       <div className="flex items-center justify-between mb-3">
                         <Trophy className="text-green-500" size={32} />
                       </div>
-                      <p className="text-green-600 text-sm font-medium mb-1">Premiação (90%)</p>
+                      <p className="text-green-600 text-sm font-medium mb-1">Premiação (85%)</p>
                       <p className="text-3xl font-bold text-green-900">R$ {dashboardData.prizePool.toFixed(2)}</p>
                       <p className="text-xs text-green-600 mt-1">Para {dashboardData.winners.length} vencedor(es)</p>
                     </div>
@@ -1085,13 +1209,44 @@ const AdminPanel = ({ setView }) => {
 
                     <div className="bg-orange-50 border-2 border-orange-200 rounded-xl p-6">
                       <div className="flex items-center justify-between mb-3">
-                        <Users className="text-orange-500" size={32} />
+                        <Store className="text-orange-500" size={32} />
                       </div>
-                      <p className="text-orange-600 text-sm font-medium mb-1">Participantes</p>
-                      <p className="text-3xl font-bold text-orange-900">{dashboardData.totalParticipants}</p>
-                      <p className="text-xs text-orange-600 mt-1">{dashboardData.paidCount} pagos</p>
+                      <p className="text-orange-600 text-sm font-medium mb-1">Estabelecimentos (5%)</p>
+                      <p className="text-3xl font-bold text-orange-900">R$ {dashboardData.establishmentFee.toFixed(2)}</p>
+                    </div>
+
+                    <div className="bg-gray-50 border-2 border-gray-200 rounded-xl p-6">
+                      <div className="flex items-center justify-between mb-3">
+                        <Users className="text-gray-500" size={32} />
+                      </div>
+                      <p className="text-gray-600 text-sm font-medium mb-1">Participantes</p>
+                      <p className="text-3xl font-bold text-gray-900">{dashboardData.totalParticipations}</p>
+                      <p className="text-xs text-gray-600 mt-1">{dashboardData.paidCount} pagos</p>
                     </div>
                   </div>
+
+                  {/* Comissões por Estabelecimento */}
+                  {Object.keys(establishmentCommissions).length > 0 && (
+                    <div className="bg-white rounded-xl shadow-sm border p-6">
+                      <h3 className="text-lg font-bold mb-4 flex items-center gap-2">
+                        <Store size={24} className="text-orange-600" />
+                        Comissões por Estabelecimento
+                      </h3>
+                      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                        {Object.entries(establishmentCommissions).map(([estId, commission]) => {
+                          const est = establishments.find(e => e.id === estId);
+                          if (!est) return null;
+                          return (
+                            <div key={estId} className="bg-orange-50 border border-orange-200 rounded-lg p-4">
+                              <p className="font-bold text-lg">{est.name}</p>
+                              <p className="text-2xl font-bold text-orange-600 mt-2">R$ {commission.toFixed(2)}</p>
+                              <p className="text-xs text-gray-600 mt-1">5% de comissão</p>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  )}
 
                   {/* Vencedores / Premiação */}
                   <div className="bg-gradient-to-br from-yellow-400 via-yellow-500 to-orange-500 rounded-xl p-8 text-white">
@@ -1114,7 +1269,7 @@ const AdminPanel = ({ setView }) => {
                       <div className="space-y-4">
                         <div className="bg-white bg-opacity-20 rounded-xl p-6">
                           <div className="text-center mb-4">
-                            <p className="text-yellow-100 text-sm font-medium">PRÊMIO {dashboardData.winners.length > 1 ? 'POR VENCEDOR' : 'TOTAL'}</p>
+                            <p className="text-yellow-100 text-sm font-medium">PRÊMIO {dashboardData.winners.length > 1 ? 'POR VENCEDOR' : 'TOTAL'} (85%)</p>
                             <p className="text-5xl font-bold mt-2">R$ {dashboardData.prizePerWinner.toFixed(2)}</p>
                           </div>
                         </div>
@@ -1125,18 +1280,23 @@ const AdminPanel = ({ setView }) => {
                             {dashboardData.winners.length > 1 ? 'Vencedores' : '🏆 Campeão'}
                           </h4>
                           <div className="space-y-3">
-                            {dashboardData.winners.map((winner) => (
-                              <div key={winner.user.id} className="bg-white rounded-lg p-4 text-gray-900 flex justify-between items-center">
-                                <div>
-                                  <p className="font-bold text-lg">{winner.user.name}</p>
-                                  <p className="text-sm text-gray-600">{winner.user.whatsapp}</p>
+                            {dashboardData.winners.map((winner) => {
+                              const est = establishments.find(e => e.id === winner.establishmentId);
+                              return (
+                                <div key={`${winner.user.id}-${winner.cartelaCode}`} className="bg-white rounded-lg p-4 text-gray-900 flex justify-between items-center">
+                                  <div>
+                                    <p className="font-bold text-lg">{winner.user.name}</p>
+                                    <p className="text-sm text-gray-600">{winner.user.whatsapp}</p>
+                                    <p className="text-xs text-blue-600 font-mono mt-1">🎫 {winner.cartelaCode}</p>
+                                    {est && <p className="text-xs text-orange-600 mt-1">🏪 {est.name}</p>}
+                                  </div>
+                                  <div className="text-right">
+                                    <p className="text-2xl font-bold text-green-600">{winner.points} pts</p>
+                                    <p className="text-sm font-medium text-green-700">R$ {dashboardData.prizePerWinner.toFixed(2)}</p>
+                                  </div>
                                 </div>
-                                <div className="text-right">
-                                  <p className="text-2xl font-bold text-green-600">{winner.points} pts</p>
-                                  <p className="text-sm font-medium text-green-700">R$ {dashboardData.prizePerWinner.toFixed(2)}</p>
-                                </div>
-                              </div>
-                            ))}
+                              );
+                            })}
                           </div>
                         </div>
 
@@ -1160,15 +1320,17 @@ const AdminPanel = ({ setView }) => {
                           <tr>
                             <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Pos</th>
                             <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Nome</th>
+                            <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Estabelecimento</th>
                             <th className="px-4 py-3 text-center text-xs font-medium text-gray-500 uppercase">Pontos</th>
                             <th className="px-4 py-3 text-center text-xs font-medium text-gray-500 uppercase">Prêmio</th>
                           </tr>
                         </thead>
                         <tbody className="divide-y">
                           {dashboardData.ranking.map((item, index) => {
-                            const isWinner = dashboardData.winners.some(w => w.user.id === item.user.id);
+                            const isWinner = dashboardData.winners.some(w => w.user.id === item.user.id && w.cartelaCode === item.cartelaCode);
+                            const est = establishments.find(e => e.id === item.establishmentId);
                             return (
-                              <tr key={item.user.id} className={isWinner ? 'bg-yellow-50' : ''}>
+                              <tr key={`${item.user.id}-${item.cartelaCode}`} className={isWinner ? 'bg-yellow-50' : ''}>
                                 <td className="px-4 py-3">
                                   <div className="flex items-center gap-2">
                                     {index === 0 && <Trophy className="text-yellow-500" size={16} />}
@@ -1179,7 +1341,15 @@ const AdminPanel = ({ setView }) => {
                                   <div>
                                     <p className="font-medium">{item.user.name}</p>
                                     <p className="text-xs text-gray-500">{item.user.whatsapp}</p>
+                                    <p className="text-xs text-blue-600 font-mono">🎫 {item.cartelaCode}</p>
                                   </div>
+                                </td>
+                                <td className="px-4 py-3">
+                                  {est ? (
+                                    <span className="text-sm text-orange-600 font-medium">{est.name}</span>
+                                  ) : (
+                                    <span className="text-xs text-gray-400">Nenhum</span>
+                                  )}
                                 </td>
                                 <td className="px-4 py-3 text-center">
                                   <span className="font-bold text-green-600">{item.points}</span>
@@ -1204,6 +1374,58 @@ const AdminPanel = ({ setView }) => {
           </div>
         )}
 
+        {activeTab === 'establishments' && (
+          <div>
+            <div className="flex justify-between mb-6">
+              <div>
+                <h2 className="text-2xl font-bold">Estabelecimentos/Indicadores</h2>
+                <p className="text-gray-600 mt-1">Gerenciar locais que indicam participantes • Comissão: 5%</p>
+              </div>
+              <button onClick={() => { setEditingEstablishment(null); setShowEstablishmentForm(true); }} className="flex items-center gap-2 bg-green-600 text-white px-6 py-3 rounded-lg">
+                <Plus size={20} /> Novo Estabelecimento
+              </button>
+            </div>
+            {establishments.length === 0 ? (
+              <div className="bg-white rounded-xl p-12 text-center border-2 border-dashed">
+                <Store className="mx-auto text-gray-400 mb-4" size={48} />
+                <h3 className="text-xl font-semibold mb-2">Nenhum estabelecimento cadastrado</h3>
+              </div>
+            ) : (
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                {establishments.map((est) => (
+                  <div key={est.id} className="bg-white rounded-xl shadow-sm border p-6">
+                    <div className="flex items-start justify-between mb-4">
+                      <div className="flex items-center gap-3">
+                        <div className="bg-orange-100 p-3 rounded-lg">
+                          <Store className="text-orange-600" size={24} />
+                        </div>
+                        <div>
+                          <h3 className="text-lg font-bold">{est.name}</h3>
+                          <p className="text-sm text-gray-600">{est.contact || 'Sem contato'}</p>
+                        </div>
+                      </div>
+                      <div className="flex gap-2">
+                        <button onClick={() => { setEditingEstablishment(est); setShowEstablishmentForm(true); }} className="p-2 bg-blue-100 text-blue-700 rounded-lg"><Edit2 size={16} /></button>
+                        <button onClick={() => confirm('Excluir?') && deleteEstablishment(est.id)} className="p-2 bg-red-100 text-red-700 rounded-lg"><Trash2 size={16} /></button>
+                      </div>
+                    </div>
+                    <div className="space-y-2">
+                      <div className="flex items-center justify-between text-sm">
+                        <span className="text-gray-600">Telefone:</span>
+                        <span className="font-medium">{est.phone || '-'}</span>
+                      </div>
+                      <div className="flex items-center justify-between text-sm">
+                        <span className="text-gray-600">Comissão:</span>
+                        <span className="font-bold text-orange-600">{est.commission || 5}%</span>
+                      </div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
+
         {activeTab === 'settings' && (
           <div>
             <h2 className="text-2xl font-bold mb-6">Configurações</h2>
@@ -1215,6 +1437,7 @@ const AdminPanel = ({ setView }) => {
               </p>
               <div className="bg-blue-50 border border-blue-200 rounded-lg p-4 mb-4">
                 <p className="text-sm font-mono"><strong>{'{RODADA}'}</strong> - Nome da rodada</p>
+                <p className="text-sm font-mono"><strong>{'{CARTELA}'}</strong> - Código da cartela</p>
                 <p className="text-sm font-mono"><strong>{'{PALPITES}'}</strong> - Lista de palpites do usuário</p>
               </div>
 
@@ -1246,12 +1469,14 @@ const AdminPanel = ({ setView }) => {
                 <div className="bg-white p-4 rounded border text-sm whitespace-pre-wrap font-mono">
                   {whatsappMessage
                     .replace('{RODADA}', 'Rodada 1')
+                    .replace('{CARTELA}', 'CART-ABC123')
                     .replace('{PALPITES}', '1. Palmeiras 2 x 1 Flamengo\n2. Corinthians 1 x 1 Santos')}
                 </div>
               </div>
             </div>
           </div>
         )}
+        
         {activeTab === 'rounds' && (
           <div>
             <div className="flex justify-between mb-6">
@@ -1364,45 +1589,71 @@ const AdminPanel = ({ setView }) => {
                 <h2 className="text-2xl font-bold">Controle Financeiro</h2>
                 <p className="text-gray-600 mt-1">Gerencie os pagamentos por rodada (R$ 15,00 cada)</p>
               </div>
-              <div className="w-64">
-                <label className="block text-sm font-medium mb-2">Selecione a Rodada</label>
-                <select
-                  value={selectedFinanceRound || ''}
-                  onChange={(e) => setSelectedFinanceRound(e.target.value)}
-                  className="w-full px-4 py-2 border rounded-lg bg-white"
-                >
-                  <option value="">Todas as rodadas</option>
-                  {rounds.filter(r => r.status !== 'upcoming').sort((a, b) => b.number - a.number).map(round => (
-                    <option key={round.id} value={round.id}>
-                      {round.name}
-                    </option>
-                  ))}
-                </select>
+              <div className="flex gap-3">
+                <div className="w-64">
+                  <label className="block text-sm font-medium mb-2">Filtrar por Estabelecimento</label>
+                  <select
+                    value={establishmentFilter}
+                    onChange={(e) => setEstablishmentFilter(e.target.value)}
+                    className="w-full px-4 py-2 border rounded-lg bg-white"
+                  >
+                    <option value="all">Todos</option>
+                    <option value="none">Sem estabelecimento</option>
+                    {establishments.map(est => (
+                      <option key={est.id} value={est.id}>{est.name}</option>
+                    ))}
+                  </select>
+                </div>
+                <div className="w-64">
+                  <label className="block text-sm font-medium mb-2">Selecione a Rodada</label>
+                  <select
+                    value={selectedFinanceRound || ''}
+                    onChange={(e) => setSelectedFinanceRound(e.target.value)}
+                    className="w-full px-4 py-2 border rounded-lg bg-white"
+                  >
+                    <option value="">Todas as rodadas</option>
+                    {rounds.filter(r => r.status !== 'upcoming').sort((a, b) => b.number - a.number).map(round => (
+                      <option key={round.id} value={round.id}>
+                        {round.name}
+                      </option>
+                    ))}
+                  </select>
+                </div>
               </div>
             </div>
 
             {selectedFinanceRound ? (
               (() => {
                 const round = rounds.find(r => r.id === selectedFinanceRound);
-                const participants = getRoundParticipants(selectedFinanceRound);
-                const summary = getRoundFinancialSummary(selectedFinanceRound);
+                let participants = getRoundParticipants(selectedFinanceRound);
                 
-                const filteredParticipants = participants.filter(user => {
-                  if (paymentFilter === 'paid') return getPaymentStatus(user.id, selectedFinanceRound);
-                  if (paymentFilter === 'pending') return !getPaymentStatus(user.id, selectedFinanceRound);
+                // Filtrar por estabelecimento
+                if (establishmentFilter !== 'all') {
+                  if (establishmentFilter === 'none') {
+                    participants = participants.filter(p => !p.establishmentId);
+                  } else {
+                    participants = participants.filter(p => p.establishmentId === establishmentFilter);
+                  }
+                }
+                
+                const summary = getRoundFinancialSummary(selectedFinanceRound, establishmentFilter !== 'all' ? establishmentFilter : null);
+                
+                const filteredParticipants = participants.filter(p => {
+                  if (paymentFilter === 'paid') return p.paid;
+                  if (paymentFilter === 'pending') return !p.paid;
                   return true;
                 });
 
                 return (
                   <div className="space-y-6">
                     {/* Resumo Financeiro */}
-                    <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+                    <div className="grid grid-cols-1 md:grid-cols-5 gap-4">
                       <div className="bg-blue-50 border-2 border-blue-200 rounded-xl p-4">
                         <div className="flex items-center justify-between">
                           <div>
                             <p className="text-blue-600 text-sm font-medium">Total Esperado</p>
                             <p className="text-2xl font-bold text-blue-900">R$ {summary.totalExpected.toFixed(2)}</p>
-                            <p className="text-xs text-blue-600 mt-1">{summary.totalParticipants} participantes</p>
+                            <p className="text-xs text-blue-600 mt-1">{summary.totalParticipations} cartelas</p>
                           </div>
                           <Users className="text-blue-400" size={32} />
                         </div>
@@ -1419,29 +1670,33 @@ const AdminPanel = ({ setView }) => {
                         </div>
                       </div>
 
-                      <div className="bg-red-50 border-2 border-red-200 rounded-xl p-4">
+                      <div className="bg-yellow-50 border-2 border-yellow-200 rounded-xl p-4">
                         <div className="flex items-center justify-between">
                           <div>
-                            <p className="text-red-600 text-sm font-medium">Pendente</p>
-                            <p className="text-2xl font-bold text-red-900">R$ {summary.totalPending.toFixed(2)}</p>
-                            <p className="text-xs text-red-600 mt-1">{summary.pendingCount} devendo</p>
+                            <p className="text-yellow-600 text-sm font-medium">Premiação (85%)</p>
+                            <p className="text-2xl font-bold text-yellow-900">R$ {summary.prizePool.toFixed(2)}</p>
                           </div>
-                          <AlertCircle className="text-red-400" size={32} />
+                          <Trophy className="text-yellow-400" size={32} />
                         </div>
                       </div>
 
                       <div className="bg-purple-50 border-2 border-purple-200 rounded-xl p-4">
                         <div className="flex items-center justify-between">
                           <div>
-                            <p className="text-purple-600 text-sm font-medium">Taxa de Pagamento</p>
-                            <p className="text-2xl font-bold text-purple-900">
-                              {summary.totalParticipants > 0 ? Math.round((summary.paidCount / summary.totalParticipants) * 100) : 0}%
-                            </p>
-                            <p className="text-xs text-purple-600 mt-1">
-                              {summary.paidCount}/{summary.totalParticipants}
-                            </p>
+                            <p className="text-purple-600 text-sm font-medium">Admin (10%)</p>
+                            <p className="text-2xl font-bold text-purple-900">R$ {summary.adminFee.toFixed(2)}</p>
                           </div>
-                          <Trophy className="text-purple-400" size={32} />
+                          <Award className="text-purple-400" size={32} />
+                        </div>
+                      </div>
+
+                      <div className="bg-orange-50 border-2 border-orange-200 rounded-xl p-4">
+                        <div className="flex items-center justify-between">
+                          <div>
+                            <p className="text-orange-600 text-sm font-medium">Estabelec. (5%)</p>
+                            <p className="text-2xl font-bold text-orange-900">R$ {summary.establishmentFee.toFixed(2)}</p>
+                          </div>
+                          <Store className="text-orange-400" size={32} />
                         </div>
                       </div>
                     </div>
@@ -1456,7 +1711,7 @@ const AdminPanel = ({ setView }) => {
                             paymentFilter === 'all' ? 'bg-gray-800 text-white' : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
                           }`}
                         >
-                          Todos ({summary.totalParticipants})
+                          Todos ({summary.totalParticipations})
                         </button>
                         <button
                           onClick={() => setPaymentFilter('paid')}
@@ -1477,10 +1732,17 @@ const AdminPanel = ({ setView }) => {
                       </div>
                     </div>
 
-                    {/* Lista de Participantes */}
+                    {/* Lista de Cartelas */}
                     <div className="bg-white rounded-xl shadow-sm border overflow-hidden">
                       <div className="bg-gradient-to-r from-green-600 to-green-700 text-white p-4">
                         <h3 className="font-bold text-lg">{round?.name}</h3>
+                        <p className="text-sm text-green-100 mt-1">
+                          {establishmentFilter === 'all' && 'Todos os estabelecimentos'}
+                          {establishmentFilter === 'none' && 'Sem estabelecimento'}
+                          {establishmentFilter !== 'all' && establishmentFilter !== 'none' && 
+                            `Estabelecimento: ${establishments.find(e => e.id === establishmentFilter)?.name}`
+                          }
+                        </p>
                       </div>
                       
                       {filteredParticipants.length === 0 ? (
@@ -1489,7 +1751,7 @@ const AdminPanel = ({ setView }) => {
                           <h3 className="text-xl font-semibold mb-2">
                             {paymentFilter === 'paid' && 'Nenhum pagamento confirmado'}
                             {paymentFilter === 'pending' && 'Todos os pagamentos confirmados! 🎉'}
-                            {paymentFilter === 'all' && 'Nenhum participante nesta rodada'}
+                            {paymentFilter === 'all' && 'Nenhuma participação nesta rodada'}
                           </h3>
                         </div>
                       ) : (
@@ -1497,28 +1759,47 @@ const AdminPanel = ({ setView }) => {
                           <thead className="bg-gray-50 border-b">
                             <tr>
                               <th className="px-6 py-4 text-left text-xs font-medium text-gray-500 uppercase">Participante</th>
-                              <th className="px-6 py-4 text-center text-xs font-medium text-gray-500 uppercase">WhatsApp</th>
+                              <th className="px-6 py-4 text-center text-xs font-medium text-gray-500 uppercase">Cartela</th>
+                              <th className="px-6 py-4 text-left text-xs font-medium text-gray-500 uppercase">Estabelecimento</th>
                               <th className="px-6 py-4 text-center text-xs font-medium text-gray-500 uppercase">Valor</th>
                               <th className="px-6 py-4 text-center text-xs font-medium text-gray-500 uppercase">Status</th>
                               <th className="px-6 py-4 text-center text-xs font-medium text-gray-500 uppercase">Ação</th>
                             </tr>
                           </thead>
                           <tbody className="divide-y">
-                            {filteredParticipants.map(user => {
-                              const isPaid = getPaymentStatus(user.id, selectedFinanceRound);
+                            {filteredParticipants.map((participant) => {
+                              const user = users.find(u => u.id === participant.userId);
+                              const establishment = establishments.find(e => e.id === participant.establishmentId);
+                              if (!user) return null;
+                              
                               return (
-                                <tr key={user.id} className={isPaid ? 'bg-green-50' : ''}>
+                                <tr key={`${participant.userId}-${participant.cartelaCode}`} className={participant.paid ? 'bg-green-50' : ''}>
                                   <td className="px-6 py-4">
-                                    <span className="font-medium">{user.name}</span>
+                                    <div>
+                                      <span className="font-medium">{user.name}</span>
+                                      <p className="text-xs text-gray-500">{user.whatsapp}</p>
+                                    </div>
                                   </td>
-                                  <td className="px-6 py-4 text-center text-sm text-gray-600">
-                                    {user.whatsapp}
+                                  <td className="px-6 py-4 text-center">
+                                    <span className="font-mono text-sm bg-blue-100 text-blue-700 px-2 py-1 rounded">
+                                      {participant.cartelaCode}
+                                    </span>
+                                  </td>
+                                  <td className="px-6 py-4">
+                                    {establishment ? (
+                                      <div>
+                                        <p className="font-medium text-sm text-orange-600">{establishment.name}</p>
+                                        <p className="text-xs text-gray-500">{establishment.contact}</p>
+                                      </div>
+                                    ) : (
+                                      <span className="text-xs text-gray-400">Nenhum</span>
+                                    )}
                                   </td>
                                   <td className="px-6 py-4 text-center">
                                     <span className="text-lg font-bold text-gray-900">R$ 15,00</span>
                                   </td>
                                   <td className="px-6 py-4 text-center">
-                                    {isPaid ? (
+                                    {participant.paid ? (
                                       <span className="inline-flex items-center gap-1 bg-green-100 text-green-700 px-3 py-1 rounded-full text-sm font-medium">
                                         <CheckCircle size={16} /> Pago
                                       </span>
@@ -1530,14 +1811,14 @@ const AdminPanel = ({ setView }) => {
                                   </td>
                                   <td className="px-6 py-4 text-center">
                                     <button
-                                      onClick={() => togglePaymentStatus(user.id, selectedFinanceRound)}
+                                      onClick={() => togglePaymentStatus(participant.userId, selectedFinanceRound, participant.cartelaCode)}
                                       className={`px-4 py-2 rounded-lg font-medium transition ${
-                                        isPaid
+                                        participant.paid
                                           ? 'bg-red-100 text-red-700 hover:bg-red-200'
                                           : 'bg-green-600 text-white hover:bg-green-700'
                                       }`}
                                     >
-                                      {isPaid ? 'Marcar Pendente' : 'Marcar Pago'}
+                                      {participant.paid ? 'Marcar Pendente' : 'Marcar Pago'}
                                     </button>
                                   </td>
                                 </tr>
@@ -1563,19 +1844,23 @@ const AdminPanel = ({ setView }) => {
 
       {showRoundForm && <RoundForm round={editingRound} teams={teams} rounds={rounds} onSave={saveRound} onCancel={() => { setEditingRound(null); setShowRoundForm(false); }} />}
       {showTeamForm && <TeamForm team={editingTeam} onSave={saveTeam} onCancel={() => { setEditingTeam(null); setShowTeamForm(false); }} />}
+      {showEstablishmentForm && <EstablishmentForm establishment={editingEstablishment} onSave={saveEstablishment} onCancel={() => { setEditingEstablishment(null); setShowEstablishmentForm(false); }} />}
       {editingPassword && <PasswordModal user={editingPassword} onSave={savePassword} onCancel={() => setEditingPassword(null)} />}
     </div>
   );
 };
 
 const UserPanel = ({ setView }) => {
-  const { currentUser, setCurrentUser, teams, rounds, predictions, users, addPrediction } = useApp();
+  const { currentUser, setCurrentUser, teams, rounds, predictions, users, establishments, addPrediction, settings } = useApp();
   const [activeTab, setActiveTab] = useState('predictions');
   const [selectedRound, setSelectedRound] = useState(null);
   const [showConfirmModal, setShowConfirmModal] = useState(false);
   const [pendingPredictions, setPendingPredictions] = useState(null);
   const [expandedRounds, setExpandedRounds] = useState({});
   const [selectedRankingRound, setSelectedRankingRound] = useState(null);
+  const [editingPredictions, setEditingPredictions] = useState(null);
+  const [selectedEstablishment, setSelectedEstablishment] = useState(null);
+  const [showEstablishmentModal, setShowEstablishmentModal] = useState(false);
 
   const toggleRound = (roundId) => {
     setExpandedRounds(prev => ({ ...prev, [roundId]: !prev[roundId] }));
@@ -1586,7 +1871,6 @@ const UserPanel = ({ setView }) => {
   const finishedRounds = rounds.filter(r => r.status === 'finished').sort((a, b) => b.number - a.number);
   const upcomingRounds = rounds.filter(r => r.status === 'upcoming').sort((a, b) => a.number - b.number);
 
-  // Inicializar com a primeira rodada finalizada
   useEffect(() => {
     if (!selectedRankingRound && finishedRounds.length > 0) {
       setSelectedRankingRound(finishedRounds[0].id);
@@ -1597,40 +1881,118 @@ const UserPanel = ({ setView }) => {
     return predictions.filter(p => p.userId === currentUser.id && p.roundId === roundId);
   };
 
+  const getUserCartelasForRound = (roundId) => {
+    const userPreds = predictions.filter(p => p.userId === currentUser.id && p.roundId === roundId);
+    const cartelaMap = {};
+    
+    userPreds.forEach(pred => {
+      const code = pred.cartelaCode || 'ANTIGA';
+      if (!cartelaMap[code]) {
+        cartelaMap[code] = {
+          code,
+          predictions: [],
+          paid: pred.paid || false,
+          establishmentId: pred.establishmentId
+        };
+      }
+      cartelaMap[code].predictions.push(pred);
+    });
+    
+    return Object.values(cartelaMap);
+  };
+
   const calculateRoundPoints = (roundId) => {
     const round = rounds.find(r => r.id === roundId);
     if (!round || round.status !== 'finished') return null;
     
-    // Verificar se pagou
-    const userRoundPreds = predictions.filter(p => p.userId === currentUser.id && p.roundId === roundId);
-    const isPaid = userRoundPreds.length > 0 && userRoundPreds[0]?.paid;
-    if (!isPaid) return 0; // Se não pagou, retorna 0 pontos
+    const cartelas = getUserCartelasForRound(roundId);
+    const cartelaPoints = {};
     
-    let points = 0;
-    round.matches?.forEach(match => {
-      const pred = predictions.find(p => 
-        p.userId === currentUser.id && 
-        p.roundId === roundId && 
-        p.matchId === match.id
-      );
+    cartelas.forEach(cartela => {
+      if (!cartela.paid) {
+        cartelaPoints[cartela.code] = 0;
+        return;
+      }
       
-      if (pred && match.finished && match.homeScore !== null && match.awayScore !== null) {
-        // Placar exato: 3 pontos
-        if (pred.homeScore === match.homeScore && pred.awayScore === match.awayScore) {
-          points += 3;
-        }
-        // Acertou o vencedor ou empate: 1 ponto
-        else {
-          const predResult = pred.homeScore > pred.awayScore ? 'home' : pred.homeScore < pred.awayScore ? 'away' : 'draw';
-          const matchResult = match.homeScore > match.awayScore ? 'home' : match.homeScore < match.awayScore ? 'away' : 'draw';
-          if (predResult === matchResult) {
-            points += 1;
+      let points = 0;
+      round.matches?.forEach(match => {
+        const pred = cartela.predictions.find(p => p.matchId === match.id);
+        
+        if (pred && match.finished && match.homeScore !== null && match.awayScore !== null) {
+          if (pred.homeScore === match.homeScore && pred.awayScore === match.awayScore) {
+            points += 3;
+          } else {
+            const predResult = pred.homeScore > pred.awayScore ? 'home' : pred.homeScore < pred.awayScore ? 'away' : 'draw';
+            const matchResult = match.homeScore > match.awayScore ? 'home' : match.homeScore < match.awayScore ? 'away' : 'draw';
+            if (predResult === matchResult) {
+              points += 1;
+            }
           }
         }
-      }
+      });
+      cartelaPoints[cartela.code] = points;
     });
-    return points;
+    
+    return cartelaPoints;
   };
+
+  const handleStartPrediction = (round) => {
+    setSelectedRound(round);
+    if (establishments.length > 0) {
+      setShowEstablishmentModal(true);
+    } else {
+      setSelectedEstablishment(null);
+    }
+  };
+
+  const handleEstablishmentSelected = (estId) => {
+    setSelectedEstablishment(estId);
+    setShowEstablishmentModal(false);
+  };
+
+  const EstablishmentModal = ({ onSelect, onCancel }) => (
+    <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
+      <div className="bg-white rounded-xl max-w-md w-full">
+        <div className="p-6 border-b">
+          <h3 className="text-2xl font-bold flex items-center gap-2">
+            <Store size={24} className="text-orange-600" />
+            Selecione o Estabelecimento
+          </h3>
+          <p className="text-gray-600 text-sm mt-2">Escolha onde você está participando</p>
+        </div>
+        <div className="p-6 space-y-3 max-h-96 overflow-y-auto">
+          <button
+            onClick={() => onSelect(null)}
+            className="w-full p-4 border-2 rounded-lg hover:bg-gray-50 text-left transition"
+          >
+            <p className="font-medium">Nenhum estabelecimento</p>
+            <p className="text-sm text-gray-500">Participação direta</p>
+          </button>
+          {establishments.map(est => (
+            <button
+              key={est.id}
+              onClick={() => onSelect(est.id)}
+              className="w-full p-4 border-2 rounded-lg hover:bg-orange-50 hover:border-orange-300 text-left transition"
+            >
+              <div className="flex items-start gap-3">
+                <div className="bg-orange-100 p-2 rounded-lg">
+                  <Store size={20} className="text-orange-600" />
+                </div>
+                <div>
+                  <p className="font-bold">{est.name}</p>
+                  {est.contact && <p className="text-sm text-gray-600">{est.contact}</p>}
+                  {est.phone && <p className="text-xs text-gray-500">{est.phone}</p>}
+                </div>
+              </div>
+            </button>
+          ))}
+        </div>
+        <div className="p-6 border-t">
+          <button onClick={onCancel} className="w-full px-6 py-2 border rounded-lg">Cancelar</button>
+        </div>
+      </div>
+    </div>
+  );
 
   const RoundAccordion = ({ round }) => {
     const isExpanded = expandedRounds[round.id];
@@ -1718,7 +2080,7 @@ const UserPanel = ({ setView }) => {
                 <Target className="mx-auto text-orange-500 mb-3" size={48} />
                 <p className="text-gray-800 font-bold mb-2">Você ainda não fez seus palpites!</p>
                 <button
-                  onClick={() => setSelectedRound(round)}
+                  onClick={() => handleStartPrediction(round)}
                   className="mt-4 bg-green-600 text-white px-6 py-2 rounded-lg font-semibold"
                 >
                   Fazer Palpites Agora
@@ -1755,15 +2117,12 @@ const UserPanel = ({ setView }) => {
                   return (
                     <div key={match.id} className="bg-white rounded-lg p-4 border">
                       <div className="grid grid-cols-12 gap-3 items-center">
-                        {/* Time Casa */}
                         <div className="col-span-4 flex items-center gap-2">
                           <img src={homeTeam?.logo} alt="" className="w-8 h-8 object-contain" />
                           <span className="font-medium text-sm">{homeTeam?.name}</span>
                         </div>
 
-                        {/* Resultado */}
                         <div className="col-span-4">
-                          {/* Palpite */}
                           {pred && (
                             <div className="flex items-center justify-center gap-2 mb-2">
                               <span className="text-xs text-gray-500">Palpite:</span>
@@ -1775,7 +2134,6 @@ const UserPanel = ({ setView }) => {
                             </div>
                           )}
                           
-                          {/* Resultado Real */}
                           {match.finished && match.homeScore !== null && (
                             <div className="flex items-center justify-center gap-2">
                               <span className="text-xs text-gray-500">Real:</span>
@@ -1794,14 +2152,12 @@ const UserPanel = ({ setView }) => {
                           )}
                         </div>
 
-                        {/* Time Fora */}
                         <div className="col-span-4 flex items-center gap-2 justify-end">
                           <span className="font-medium text-sm">{awayTeam?.name}</span>
                           <img src={awayTeam?.logo} alt="" className="w-8 h-8 object-contain" />
                         </div>
                       </div>
 
-                      {/* Pontuação do jogo */}
                       {matchPoints !== null && (
                         <div className="mt-3 pt-3 border-t flex justify-center">
                           {matchPoints === 3 && (
@@ -1822,7 +2178,6 @@ const UserPanel = ({ setView }) => {
                         </div>
                       )}
                       
-                      {/* Aviso de pagamento pendente */}
                       {round.status === 'finished' && !isPaid && (
                         <div className="mt-3 pt-3 border-t">
                           <div className="bg-orange-50 border border-orange-200 rounded-lg p-3 text-center">
@@ -1843,14 +2198,22 @@ const UserPanel = ({ setView }) => {
     );
   };
 
-  const isRoundFinalized = (roundId) => {
-    const round = rounds.find(r => r.id === roundId);
-    return round?.matches?.every(match => predictions.find(p => p.userId === currentUser.id && p.roundId === roundId && p.matchId === match.id)?.finalized);
-  };
-
-  const PredictionForm = ({ round }) => {
+  const PredictionForm = ({ round, initialPredictions = null }) => {
     const [localPreds, setLocalPreds] = useState({});
-    const isFinalized = isRoundFinalized(round.id);
+    const [cartelaCode] = useState(generateCartelaCode());
+    
+    useEffect(() => {
+      if (initialPredictions) {
+        const predsObj = {};
+        initialPredictions.forEach(pred => {
+          predsObj[pred.match.id] = {
+            home: pred.homeScore,
+            away: pred.awayScore
+          };
+        });
+        setLocalPreds(predsObj);
+      }
+    }, [initialPredictions]);
 
     const handleSubmit = () => {
       const allPreds = round.matches.map(match => ({
@@ -1864,26 +2227,36 @@ const UserPanel = ({ setView }) => {
         return;
       }
 
-      setPendingPredictions({ round, predictions: allPreds });
+      setPendingPredictions({ round, predictions: allPreds, cartelaCode, establishmentId: selectedEstablishment });
       setShowConfirmModal(true);
     };
+
+    const selectedEst = establishments.find(e => e.id === selectedEstablishment);
 
     return (
       <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
         <div className="bg-white rounded-xl max-w-2xl w-full max-h-[90vh] overflow-y-auto">
           <div className="p-6 border-b sticky top-0 bg-white">
             <h3 className="text-2xl font-bold">{round.name}</h3>
-            <p className="text-gray-600 mt-1">{isFinalized ? <span className="text-green-600">✅ Finalizados</span> : 'R$ 15,00'}</p>
+            <div className="flex items-center gap-3 mt-2">
+              <span className="bg-blue-100 text-blue-700 px-3 py-1 rounded-full text-sm font-mono font-bold">
+                🎫 {cartelaCode}
+              </span>
+              <span className="text-gray-600 text-sm">R$ 15,00</span>
+              {selectedEst && (
+                <span className="bg-orange-100 text-orange-700 px-3 py-1 rounded-full text-sm font-bold flex items-center gap-1">
+                  <Store size={14} /> {selectedEst.name}
+                </span>
+              )}
+            </div>
           </div>
           <div className="p-6 space-y-4">
             {round.matches?.map((match) => {
               const homeTeam = teams.find(t => t.id === match.homeTeamId);
               const awayTeam = teams.find(t => t.id === match.awayTeamId);
-              const userPred = predictions.find(p => p.userId === currentUser.id && p.roundId === round.id && p.matchId === match.id);
               return (
                 <div key={match.id} className="bg-gray-50 p-4 rounded-lg">
                   <div className="flex flex-col gap-3">
-                    {/* Times e Logos */}
                     <div className="flex items-center justify-between">
                       <div className="flex items-center gap-2 flex-1">
                         <img src={homeTeam?.logo} alt="" className="w-8 h-8 flex-shrink-0" />
@@ -1896,16 +2269,14 @@ const UserPanel = ({ setView }) => {
                       </div>
                     </div>
                     
-                    {/* Inputs de Palpite */}
                     <div className="flex items-center justify-center gap-3">
                       <input 
                         type="number" 
                         min="0" 
                         max="20" 
-                        defaultValue={userPred?.homeScore} 
+                        value={localPreds[match.id]?.home || ''} 
                         onChange={(e) => setLocalPreds({ ...localPreds, [match.id]: { ...localPreds[match.id], home: e.target.value } })} 
-                        disabled={isFinalized} 
-                        className={`w-16 px-2 py-2 border rounded text-center font-bold ${isFinalized ? 'bg-gray-200' : ''}`} 
+                        className="w-16 px-2 py-2 border rounded text-center font-bold" 
                         placeholder="0" 
                       />
                       <span className="font-bold text-gray-400">X</span>
@@ -1913,10 +2284,9 @@ const UserPanel = ({ setView }) => {
                         type="number" 
                         min="0" 
                         max="20" 
-                        defaultValue={userPred?.awayScore} 
+                        value={localPreds[match.id]?.away || ''} 
                         onChange={(e) => setLocalPreds({ ...localPreds, [match.id]: { ...localPreds[match.id], away: e.target.value } })} 
-                        disabled={isFinalized} 
-                        className={`w-16 px-2 py-2 border rounded text-center font-bold ${isFinalized ? 'bg-gray-200' : ''}`} 
+                        className="w-16 px-2 py-2 border rounded text-center font-bold" 
                         placeholder="0" 
                       />
                     </div>
@@ -1926,172 +2296,213 @@ const UserPanel = ({ setView }) => {
             })}
           </div>
           <div className="p-6 border-t flex gap-3 sticky bottom-0 bg-white">
-            <button onClick={() => setSelectedRound(null)} className="px-6 py-2 border rounded-lg">{isFinalized ? 'Fechar' : 'Cancelar'}</button>
-            {!isFinalized && <button onClick={handleSubmit} className="px-6 py-2 bg-green-600 text-white rounded-lg">Confirmar</button>}
+            <button onClick={() => { setSelectedRound(null); setEditingPredictions(null); setPendingPredictions(null); setSelectedEstablishment(null); }} className="px-6 py-2 border rounded-lg">Cancelar</button>
+            <button onClick={handleSubmit} className="px-6 py-2 bg-green-600 text-white rounded-lg">Confirmar</button>
           </div>
         </div>
       </div>
     );
   };
 
-  const ConfirmModal = ({ round, predictionsData, onConfirm, onCancel }) => (
-    <div className="fixed inset-0 bg-black bg-opacity-70 flex items-center justify-center p-4 z-50">
-      <div className="bg-white rounded-2xl max-w-lg w-full max-h-[90vh] overflow-y-auto">
-        <div className="p-6 bg-gradient-to-r from-yellow-500 to-orange-500 text-white rounded-t-2xl">
-          <div className="flex items-center gap-3">
-            <Award size={32} />
-            <div>
-              <h3 className="text-2xl font-bold">Confirmar Palpites</h3>
-              <p className="text-yellow-100">{round.name}</p>
-            </div>
-          </div>
-        </div>
-        <div className="p-6">
-          <div className="bg-red-50 border-2 border-red-300 rounded-xl p-4 mb-6">
-            <div className="flex items-start gap-3">
-              <div className="bg-red-500 text-white p-2 rounded-full"><X size={20} /></div>
+  const ConfirmModal = ({ round, predictionsData, cartelaCode, establishmentId, onConfirm, onCancel }) => {
+    const handleRevisar = () => {
+      setEditingPredictions(predictionsData);
+      setShowConfirmModal(false);
+    };
+
+    const selectedEst = establishments.find(e => e.id === establishmentId);
+
+    return (
+      <div className="fixed inset-0 bg-black bg-opacity-70 flex items-center justify-center p-4 z-50">
+        <div className="bg-white rounded-2xl max-w-lg w-full max-h-[90vh] overflow-y-auto">
+          <div className="p-6 bg-gradient-to-r from-yellow-500 to-orange-500 text-white rounded-t-2xl">
+            <div className="flex items-center gap-3">
+              <Award size={32} />
               <div>
-                <h4 className="font-bold text-red-900 text-lg mb-2">⚠️ Atenção!</h4>
-                <p className="text-red-800 font-medium">Após confirmar, você <span className="underline">NÃO PODERÁ MAIS</span> alterar!</p>
-                <p className="text-red-700 text-sm mt-2">💰 Lembre-se de efetuar o pagamento de R$ 15,00 para validar seus pontos.</p>
+                <h3 className="text-2xl font-bold">Confirmar Palpites</h3>
+                <p className="text-yellow-100">{round.name}</p>
+                <p className="text-yellow-100 font-mono text-sm mt-1">🎫 {cartelaCode}</p>
+                {selectedEst && (
+                  <p className="text-yellow-100 text-sm mt-1 flex items-center gap-1">
+                    <Store size={14} /> {selectedEst.name}
+                  </p>
+                )}
               </div>
             </div>
           </div>
-          <div className="bg-gray-50 rounded-xl p-4 mb-6 max-h-60 overflow-y-auto">
-            <h4 className="font-semibold mb-3">Seus palpites:</h4>
-            <div className="space-y-2">
-              {predictionsData.map((pred, i) => {
-                const homeTeam = teams.find(t => t.id === pred.match.homeTeamId);
-                const awayTeam = teams.find(t => t.id === pred.match.awayTeamId);
-                return (
-                  <div key={i} className="flex items-center justify-between bg-white p-3 rounded-lg border">
-                    <div className="flex items-center gap-2 text-sm">
-                      <img src={homeTeam?.logo} alt="" className="w-6 h-6" />
-                      <span className="font-medium">{homeTeam?.name}</span>
+          <div className="p-6">
+            <div className="bg-red-50 border-2 border-red-300 rounded-xl p-4 mb-6">
+              <div className="flex items-start gap-3">
+                <div className="bg-red-500 text-white p-2 rounded-full"><X size={20} /></div>
+                <div>
+                  <h4 className="font-bold text-red-900 text-lg mb-2">⚠️ Atenção!</h4>
+                  <p className="text-red-800 font-medium">Após confirmar, você <span className="underline">NÃO PODERÁ MAIS</span> alterar!</p>
+                  <p className="text-red-700 text-sm mt-2">💰 Lembre-se de efetuar o pagamento de R$ 15,00 para validar seus pontos.</p>
+                </div>
+              </div>
+            </div>
+            <div className="bg-gray-50 rounded-xl p-4 mb-6 max-h-60 overflow-y-auto">
+              <h4 className="font-semibold mb-3">Seus palpites:</h4>
+              <div className="space-y-2">
+                {predictionsData.map((pred, i) => {
+                  const homeTeam = teams.find(t => t.id === pred.match.homeTeamId);
+                  const awayTeam = teams.find(t => t.id === pred.match.awayTeamId);
+                  return (
+                    <div key={i} className="flex items-center justify-between bg-white p-3 rounded-lg border">
+                      <div className="flex items-center gap-2 text-sm">
+                        <img src={homeTeam?.logo} alt="" className="w-6 h-6" />
+                        <span className="font-medium">{homeTeam?.name}</span>
+                      </div>
+                      <div className="flex items-center gap-2 font-bold text-green-600">
+                        <span className="bg-green-100 px-3 py-1 rounded">{pred.homeScore}</span>
+                        <span className="text-gray-400">X</span>
+                        <span className="bg-green-100 px-3 py-1 rounded">{pred.awayScore}</span>
+                      </div>
+                      <div className="flex items-center gap-2 text-sm">
+                        <span className="font-medium">{awayTeam?.name}</span>
+                        <img src={awayTeam?.logo} alt="" className="w-6 h-6" />
+                      </div>
                     </div>
-                    <div className="flex items-center gap-2 font-bold text-green-600">
-                      <span className="bg-green-100 px-3 py-1 rounded">{pred.homeScore}</span>
-                      <span className="text-gray-400">X</span>
-                      <span className="bg-green-100 px-3 py-1 rounded">{pred.awayScore}</span>
-                    </div>
-                    <div className="flex items-center gap-2 text-sm">
-                      <span className="font-medium">{awayTeam?.name}</span>
-                      <img src={awayTeam?.logo} alt="" className="w-6 h-6" />
-                    </div>
-                  </div>
-                );
-              })}
+                  );
+                })}
+              </div>
+            </div>
+            <div className="bg-green-50 border border-green-200 rounded-xl p-4 mb-6">
+              <div className="flex justify-between">
+                <span className="text-green-800 font-medium">Valor:</span>
+                <span className="text-2xl font-bold text-green-600">R$ 15,00</span>
+              </div>
             </div>
           </div>
-          <div className="bg-green-50 border border-green-200 rounded-xl p-4 mb-6">
-            <div className="flex justify-between">
-              <span className="text-green-800 font-medium">Valor:</span>
-              <span className="text-2xl font-bold text-green-600">R$ 15,00</span>
-            </div>
+          <div className="p-6 border-t flex gap-3">
+            <button onClick={handleRevisar} className="flex-1 px-6 py-3 border-2 rounded-lg font-semibold hover:bg-gray-50">Revisar Palpites</button>
+            <button onClick={onConfirm} className="flex-1 px-6 py-3 bg-gradient-to-r from-green-600 to-green-700 text-white rounded-lg font-bold hover:from-green-700 hover:to-green-800">Confirmar Definitivo</button>
           </div>
-        </div>
-        <div className="p-6 border-t flex gap-3">
-          <button onClick={onCancel} className="flex-1 px-6 py-3 border-2 rounded-lg font-semibold hover:bg-gray-50">Revisar Palpites</button>
-          <button onClick={onConfirm} className="flex-1 px-6 py-3 bg-gradient-to-r from-green-600 to-green-700 text-white rounded-lg font-bold hover:from-green-700 hover:to-green-800">Confirmar Definitivo</button>
         </div>
       </div>
-    </div>
-  );
+    );
+  };
 
   const confirmAndSave = async () => {
     if (!pendingPredictions) return;
     try {
-      for (const pred of pendingPredictions.predictions) {
+      const { round, predictions: preds, cartelaCode, establishmentId } = pendingPredictions;
+      
+      for (const pred of preds) {
         await addPrediction({
           userId: currentUser.id,
-          roundId: pendingPredictions.round.id,
+          roundId: round.id,
           matchId: pred.match.id,
           homeScore: pred.homeScore,
           awayScore: pred.awayScore,
+          cartelaCode: cartelaCode,
+          establishmentId: establishmentId || null,
           finalized: true
         });
       }
-      sendWhatsAppMessage(
-        currentUser.whatsapp, 
-        pendingPredictions.round.name, 
-        pendingPredictions.predictions, 
-        teams,
-        settings?.whatsappMessage
-      );
+      
+      try {
+        const messageTemplate = settings?.whatsappMessage || '🏆 *BOLÃO BRASILEIRÃO 2025*\n\n📋 *{RODADA}*\n🎫 *Cartela: {CARTELA}*\n✅ Confirmado!\n\n{PALPITES}\n\n💰 R$ 15,00\n⚠️ *Não pode alterar após pagamento*\n\nBoa sorte! 🍀';
+        
+        sendWhatsAppMessage(
+          currentUser.whatsapp, 
+          round.name, 
+          preds, 
+          teams,
+          messageTemplate,
+          cartelaCode
+        );
+      } catch (whatsappError) {
+        console.error('Erro ao enviar WhatsApp:', whatsappError);
+      }
+      
       setShowConfirmModal(false);
       setPendingPredictions(null);
       setSelectedRound(null);
-      alert('✅ Palpites confirmados! Verifique seu WhatsApp.\n\n⚠️ IMPORTANTE: Os pontos só serão computados após a confirmação do pagamento pelo administrador.');
+      setEditingPredictions(null);
+      setSelectedEstablishment(null);
+      alert(`✅ Palpites confirmados!\n🎫 Cartela: ${cartelaCode}\n\nVerifique seu WhatsApp.\n\n⚠️ IMPORTANTE: Os pontos só serão computados após a confirmação do pagamento pelo administrador.`);
     } catch (error) {
-      alert('Erro: ' + error.message);
+      alert('Erro ao salvar palpites: ' + error.message);
     }
   };
 
-  const userPredictions = predictions.filter(p => p.userId === currentUser.id);
-  
-  // Calcula pontos totais do usuário
-  const totalPoints = rounds
-    .filter(r => r.status === 'finished')
-    .reduce((sum, round) => sum + (calculateRoundPoints(round.id) || 0), 0);
-  
-  // Função para calcular pontos de um usuário em uma rodada específica
-  const calculateUserRoundPoints = (userId, roundId) => {
+  const calculateUserRoundPoints = (userId, roundId, cartelaCode = null) => {
     const round = rounds.find(r => r.id === roundId);
     if (!round || round.status !== 'finished') return 0;
     
-    // Verificar se pagou
-    const userRoundPreds = predictions.filter(p => p.userId === userId && p.roundId === roundId);
-    const isPaid = userRoundPreds.length > 0 && userRoundPreds[0]?.paid;
-    if (!isPaid) return 0; // Se não pagou, retorna 0 pontos
-    
-    let points = 0;
-    round.matches?.forEach(match => {
-      const pred = predictions.find(p => 
+    if (cartelaCode) {
+      const cartelaPreds = predictions.filter(p => 
         p.userId === userId && 
         p.roundId === roundId && 
-        p.matchId === match.id
+        p.cartelaCode === cartelaCode
       );
       
-      if (pred && match.finished && match.homeScore !== null && match.awayScore !== null) {
-        if (pred.homeScore === match.homeScore && pred.awayScore === match.awayScore) {
-          points += 3;
-        } else {
-          const predResult = pred.homeScore > pred.awayScore ? 'home' : pred.homeScore < pred.awayScore ? 'away' : 'draw';
-          const matchResult = match.homeScore > match.awayScore ? 'home' : match.homeScore < match.awayScore ? 'away' : 'draw';
-          if (predResult === matchResult) {
-            points += 1;
+      if (cartelaPreds.length === 0) return 0;
+      const isPaid = cartelaPreds[0]?.paid;
+      if (!isPaid) return 0;
+      
+      let points = 0;
+      round.matches?.forEach(match => {
+        const pred = cartelaPreds.find(p => p.matchId === match.id);
+        
+        if (pred && match.finished && match.homeScore !== null && match.awayScore !== null) {
+          if (pred.homeScore === match.homeScore && pred.awayScore === match.awayScore) {
+            points += 3;
+          } else {
+            const predResult = pred.homeScore > pred.awayScore ? 'home' : pred.homeScore < pred.awayScore ? 'away' : 'draw';
+            const matchResult = match.homeScore > match.awayScore ? 'home' : match.homeScore < match.awayScore ? 'away' : 'draw';
+            if (predResult === matchResult) {
+              points += 1;
+            }
           }
         }
-      }
-    });
-    return points;
+      });
+      return points;
+    }
+    
+    const userRoundPreds = predictions.filter(p => p.userId === userId && p.roundId === roundId);
+    const cartelaCodes = [...new Set(userRoundPreds.map(p => p.cartelaCode || 'ANTIGA'))];
+    
+    return cartelaCodes.reduce((sum, code) => {
+      return sum + calculateUserRoundPoints(userId, roundId, code);
+    }, 0);
   };
-  
-  // Ranking por rodada específica
+
   const getRankingForRound = (roundId) => {
     if (!roundId) return [];
     
-    return users.filter(u => !u.isAdmin).map(user => {
-      const userPoints = calculateUserRoundPoints(user.id, roundId);
+    const rankingEntries = [];
+    
+    users.filter(u => !u.isAdmin).forEach(user => {
       const userRoundPreds = predictions.filter(p => p.userId === user.id && p.roundId === roundId);
-      const isPaid = userRoundPreds.length > 0 && userRoundPreds[0]?.paid;
+      const cartelaCodes = [...new Set(userRoundPreds.map(p => p.cartelaCode || 'ANTIGA'))];
       
-      return {
-        user,
-        points: userPoints,
-        predictions: userRoundPreds.length,
-        isPaid
-      };
-    })
-    .filter(item => item.isPaid) // Só mostra quem pagou
-    .sort((a, b) => {
-      // Ordena por pontos, se empate ordena por quem tem mais palpites
+      cartelaCodes.forEach(cartelaCode => {
+        const cartelaPreds = userRoundPreds.filter(p => (p.cartelaCode || 'ANTIGA') === cartelaCode);
+        const isPaid = cartelaPreds.length > 0 && cartelaPreds[0]?.paid;
+        
+        if (!isPaid) return;
+        
+        const points = calculateUserRoundPoints(user.id, roundId, cartelaCode);
+        
+        rankingEntries.push({
+          user,
+          cartelaCode,
+          establishmentId: cartelaPreds[0]?.establishmentId,
+          points,
+          predictions: cartelaPreds.length,
+          isPaid: true
+        });
+      });
+    });
+    
+    return rankingEntries.sort((a, b) => {
       if (b.points !== a.points) return b.points - a.points;
       return b.predictions - a.predictions;
     });
   };
-  
-  // Calcular premiação por rodada
+
   const getRoundPrize = (roundId) => {
     const round = rounds.find(r => r.id === roundId);
     if (!round || round.status !== 'finished') return null;
@@ -2100,7 +2511,7 @@ const UserPanel = ({ setView }) => {
     if (ranking.length === 0) return null;
 
     const totalPaid = ranking.length * 15;
-    const prizePool = totalPaid * 0.9;
+    const prizePool = totalPaid * 0.85;
     const maxPoints = ranking[0].points;
     const winners = ranking.filter(r => r.points === maxPoints);
     const prizePerWinner = prizePool / winners.length;
@@ -2112,6 +2523,17 @@ const UserPanel = ({ setView }) => {
       prizePerWinner
     };
   };
+
+  const userPredictions = predictions.filter(p => p.userId === currentUser.id);
+  const totalPoints = rounds
+    .filter(r => r.status === 'finished')
+    .reduce((sum, round) => {
+      const cartelaPoints = calculateRoundPoints(round.id);
+      if (cartelaPoints) {
+        return sum + Object.values(cartelaPoints).reduce((a, b) => a + b, 0);
+      }
+      return sum;
+    }, 0);
   
   const ranking = selectedRankingRound ? getRankingForRound(selectedRankingRound) : [];
   const roundPrize = selectedRankingRound ? getRoundPrize(selectedRankingRound) : null;
@@ -2179,7 +2601,7 @@ const UserPanel = ({ setView }) => {
         {activeTab === 'predictions' && (
           <div>
             <h2 className="text-2xl font-bold mb-2">Rodadas Disponíveis</h2>
-            <p className="text-gray-600 mb-6">Escolha uma rodada e faça seus palpites</p>
+            <p className="text-gray-600 mb-6">Escolha uma rodada e faça seus palpites • R$ 15,00 por participação</p>
             {openRounds.length === 0 ? (
               <div className="bg-white rounded-xl p-12 text-center border-2 border-dashed">
                 <Calendar className="mx-auto text-gray-400 mb-4" size={48} />
@@ -2188,29 +2610,71 @@ const UserPanel = ({ setView }) => {
             ) : (
               <div className="grid gap-4">
                 {openRounds.map((round) => {
-                  const isFinalized = isRoundFinalized(round.id);
-                  const userRoundPreds = predictions.filter(p => p.userId === currentUser.id && p.roundId === round.id);
-                  const isPaid = userRoundPreds.length > 0 && userRoundPreds[0]?.paid;
+                  const userCartelas = getUserCartelasForRound(round.id);
                   
                   return (
                     <div key={round.id} className="bg-white rounded-xl shadow-sm border p-6">
-                      <div className="flex justify-between items-center">
+                      <div className="flex justify-between items-start mb-4">
                         <div>
-                          <div className="flex items-center gap-3">
-                            <h3 className="text-xl font-bold">{round.name}</h3>
-                            {isFinalized && <span className="bg-green-100 text-green-700 px-3 py-1 rounded-full text-xs">✅ Finalizado</span>}
-                            {isFinalized && (
-                              <span className={`px-3 py-1 rounded-full text-xs font-medium ${isPaid ? 'bg-green-600 text-white' : 'bg-orange-100 text-orange-700'}`}>
-                                {isPaid ? '💰 Pago' : '⚠️ Pendente'}
-                              </span>
-                            )}
-                          </div>
-                          <p className="text-gray-600 mt-1">{round.matches?.length || 0} jogos • R$ 15,00</p>
+                          <h3 className="text-xl font-bold">{round.name}</h3>
+                          <p className="text-gray-600 mt-1">{round.matches?.length || 0} jogos • R$ 15,00 por participação</p>
                         </div>
-                        <button onClick={() => setSelectedRound(round)} className={`px-6 py-3 rounded-lg font-medium ${isFinalized ? 'bg-gray-100 text-gray-700' : 'bg-green-600 text-white'}`}>
-                          {isFinalized ? 'Ver Palpites' : 'Fazer Palpites'}
+                        <button 
+                          onClick={() => handleStartPrediction(round)} 
+                          className="flex items-center gap-2 bg-green-600 text-white px-6 py-3 rounded-lg font-medium hover:bg-green-700"
+                        >
+                          <Plus size={20} />
+                          Nova Participação
                         </button>
                       </div>
+
+                      {userCartelas.length > 0 && (
+                        <div className="mt-4 pt-4 border-t">
+                          <h4 className="text-sm font-semibold text-gray-700 mb-3">
+                            Suas Participações ({userCartelas.length})
+                          </h4>
+                          <div className="grid gap-2">
+                            {userCartelas.map((cartela, index) => {
+                              const est = establishments.find(e => e.id === cartela.establishmentId);
+                              return (
+                                <div key={cartela.code} className="bg-gray-50 p-3 rounded-lg flex items-center justify-between">
+                                  <div className="flex items-center gap-3">
+                                    <div className="bg-blue-600 text-white w-8 h-8 rounded-full flex items-center justify-center font-bold text-sm">
+                                      {index + 1}
+                                    </div>
+                                    <div>
+                                      <p className="font-mono text-sm font-bold text-blue-700">{cartela.code}</p>
+                                      <div className="flex items-center gap-2">
+                                        <p className="text-xs text-gray-600">{cartela.predictions.length} palpites</p>
+                                        {est && (
+                                          <span className="text-xs text-orange-600 flex items-center gap-1">
+                                            <Store size={12} /> {est.name}
+                                          </span>
+                                        )}
+                                      </div>
+                                    </div>
+                                  </div>
+                                  <div className="flex items-center gap-2">
+                                    <span className={`px-3 py-1 rounded-full text-xs font-medium ${cartela.paid ? 'bg-green-600 text-white' : 'bg-orange-100 text-orange-700'}`}>
+                                      {cartela.paid ? '💰 Pago' : '⚠️ Pendente'}
+                                    </span>
+                                  </div>
+                                </div>
+                              );
+                            })}
+                          </div>
+                          <div className="mt-3 p-3 bg-blue-50 rounded-lg">
+                            <p className="text-sm text-blue-800">
+                              <strong>Total a pagar:</strong> R$ {(userCartelas.length * 15).toFixed(2)}
+                              {userCartelas.filter(c => !c.paid).length > 0 && (
+                                <span className="ml-2 text-orange-700">
+                                  • {userCartelas.filter(c => !c.paid).length} pendente(s)
+                                </span>
+                              )}
+                            </p>
+                          </div>
+                        </div>
+                      )}
                     </div>
                   );
                 })}
@@ -2224,7 +2688,7 @@ const UserPanel = ({ setView }) => {
             <div className="flex justify-between items-start mb-6">
               <div>
                 <h2 className="text-2xl font-bold">Ranking</h2>
-                <p className="text-gray-600 mt-1">Classificação por rodada</p>
+                <p className="text-gray-600 mt-1">Classificação por rodada • Premiação: 85%</p>
               </div>
               <div className="w-64">
                 <label className="block text-sm font-medium mb-2">Selecione a Rodada</label>
@@ -2253,13 +2717,12 @@ const UserPanel = ({ setView }) => {
               </div>
             ) : (
               <div className="space-y-6">
-                {/* Premiação */}
                 {roundPrize && roundPrize.winners.length > 0 && (
                   <div className="bg-gradient-to-br from-yellow-400 via-yellow-500 to-orange-500 rounded-xl p-8 text-white">
                     <div className="flex items-center gap-3 mb-6">
                       <Trophy size={48} />
                       <div>
-                        <h3 className="text-3xl font-bold">Premiação</h3>
+                        <h3 className="text-3xl font-bold">Premiação (85%)</h3>
                         <p className="text-yellow-100">
                           {roundPrize.winners.length > 1 ? `${roundPrize.winners.length} Vencedores (Empate)` : 'Campeão da Rodada'}
                         </p>
@@ -2271,27 +2734,36 @@ const UserPanel = ({ setView }) => {
                         <p className="text-yellow-100 text-sm font-medium">PRÊMIO {roundPrize.winners.length > 1 ? 'POR VENCEDOR' : 'TOTAL'}</p>
                         <p className="text-5xl font-bold mt-2">R$ {roundPrize.prizePerWinner.toFixed(2)}</p>
                         <p className="text-yellow-100 text-sm mt-2">
-                          Total arrecadado: R$ {roundPrize.totalPaid.toFixed(2)} | Premiação (90%): R$ {roundPrize.prizePool.toFixed(2)}
+                          Total arrecadado: R$ {roundPrize.totalPaid.toFixed(2)} | Premiação: R$ {roundPrize.prizePool.toFixed(2)}
                         </p>
                       </div>
                     </div>
 
                     <div className="space-y-3">
-                      {roundPrize.winners.map((winner) => (
-                        <div key={winner.user.id} className="bg-white rounded-lg p-4 text-gray-900 flex justify-between items-center">
-                          <div className="flex items-center gap-3">
-                            <Trophy className="text-yellow-500" size={32} />
-                            <div>
-                              <p className="font-bold text-xl">{winner.user.name}</p>
-                              <p className="text-sm text-gray-600">{winner.user.whatsapp}</p>
+                      {roundPrize.winners.map((winner) => {
+                        const est = establishments.find(e => e.id === winner.establishmentId);
+                        return (
+                          <div key={`${winner.user.id}-${winner.cartelaCode}`} className="bg-white rounded-lg p-4 text-gray-900 flex justify-between items-center">
+                            <div className="flex items-center gap-3">
+                              <Trophy className="text-yellow-500" size={32} />
+                              <div>
+                                <p className="font-bold text-xl">{winner.user.name}</p>
+                                <p className="text-sm text-gray-600">{winner.user.whatsapp}</p>
+                                <p className="text-xs text-blue-600 font-mono">🎫 {winner.cartelaCode}</p>
+                                {est && (
+                                  <p className="text-xs text-orange-600 flex items-center gap-1 mt-1">
+                                    <Store size={12} /> {est.name}
+                                  </p>
+                                )}
+                              </div>
+                            </div>
+                            <div className="text-right">
+                              <p className="text-3xl font-bold text-green-600">{winner.points} pts</p>
+                              <p className="text-lg font-bold text-green-700">+ R$ {roundPrize.prizePerWinner.toFixed(2)}</p>
                             </div>
                           </div>
-                          <div className="text-right">
-                            <p className="text-3xl font-bold text-green-600">{winner.points} pts</p>
-                            <p className="text-lg font-bold text-green-700">+ R$ {roundPrize.prizePerWinner.toFixed(2)}</p>
-                          </div>
-                        </div>
-                      ))}
+                        );
+                      })}
                     </div>
 
                     {roundPrize.winners.length > 1 && (
@@ -2302,7 +2774,6 @@ const UserPanel = ({ setView }) => {
                   </div>
                 )}
 
-                {/* Tabela de Ranking */}
                 <div className="bg-white rounded-xl shadow-sm border overflow-hidden">
                   <div className="bg-gradient-to-r from-green-600 to-green-700 text-white p-4">
                     <h3 className="font-bold text-lg">
@@ -2315,18 +2786,18 @@ const UserPanel = ({ setView }) => {
                       <tr>
                         <th className="px-6 py-4 text-left text-xs font-medium text-gray-500 uppercase">Posição</th>
                         <th className="px-6 py-4 text-left text-xs font-medium text-gray-500 uppercase">Participante</th>
-                        <th className="px-6 py-4 text-center text-xs font-medium text-gray-500 uppercase">Palpites</th>
                         <th className="px-6 py-4 text-center text-xs font-medium text-gray-500 uppercase">Pontos</th>
                         <th className="px-6 py-4 text-center text-xs font-medium text-gray-500 uppercase">Premiação</th>
                       </tr>
                     </thead>
                     <tbody className="divide-y">
                       {ranking.map((item, index) => {
-                        const isWinner = roundPrize && roundPrize.winners.some(w => w.user.id === item.user.id);
+                        const isWinner = roundPrize && roundPrize.winners.some(w => w.user.id === item.user.id && w.cartelaCode === item.cartelaCode);
                         const position = isWinner && roundPrize.winners.length > 1 ? 1 : index + 1;
+                        const est = establishments.find(e => e.id === item.establishmentId);
                         
                         return (
-                          <tr key={item.user.id} className={`${item.user.id === currentUser.id ? 'bg-green-50' : ''} ${isWinner ? 'bg-yellow-50' : ''}`}>
+                          <tr key={`${item.user.id}-${item.cartelaCode}`} className={`${item.user.id === currentUser.id ? 'bg-green-50' : ''} ${isWinner ? 'bg-yellow-50' : ''}`}>
                             <td className="px-6 py-4">
                               <div className="flex items-center gap-2">
                                 {position === 1 && <Trophy className="text-yellow-500" size={20} />}
@@ -2336,15 +2807,22 @@ const UserPanel = ({ setView }) => {
                               </div>
                             </td>
                             <td className="px-6 py-4">
-                              <span className="font-medium">{item.user.name}</span>
-                              {item.user.id === currentUser.id && (
-                                <span className="ml-2 bg-green-600 text-white text-xs px-2 py-1 rounded-full">Você</span>
-                              )}
-                              {isWinner && (
-                                <span className="ml-2 bg-yellow-500 text-white text-xs px-2 py-1 rounded-full">🏆 Vencedor</span>
-                              )}
+                              <div>
+                                <span className="font-medium">{item.user.name}</span>
+                                {item.user.id === currentUser.id && (
+                                  <span className="ml-2 bg-green-600 text-white text-xs px-2 py-1 rounded-full">Você</span>
+                                )}
+                                {isWinner && (
+                                  <span className="ml-2 bg-yellow-500 text-white text-xs px-2 py-1 rounded-full">🏆 Vencedor</span>
+                                )}
+                                <p className="text-xs text-blue-600 font-mono mt-1">🎫 {item.cartelaCode}</p>
+                                {est && (
+                                  <p className="text-xs text-orange-600 flex items-center gap-1 mt-1">
+                                    <Store size={12} /> {est.name}
+                                  </p>
+                                )}
+                              </div>
                             </td>
-                            <td className="px-6 py-4 text-center">{item.predictions}</td>
                             <td className="px-6 py-4 text-center">
                               <span className="text-xl font-bold text-green-600">{item.points}</span>
                             </td>
@@ -2387,7 +2865,6 @@ const UserPanel = ({ setView }) => {
               </div>
             ) : (
               <div className="space-y-8">
-                {/* Rodadas Abertas */}
                 {openRounds.length > 0 && (
                   <div>
                     <h3 className="text-lg font-semibold mb-3 flex items-center gap-2">
@@ -2402,7 +2879,6 @@ const UserPanel = ({ setView }) => {
                   </div>
                 )}
 
-                {/* Rodadas Fechadas */}
                 {closedRounds.length > 0 && (
                   <div>
                     <h3 className="text-lg font-semibold mb-3 flex items-center gap-2">
@@ -2417,7 +2893,6 @@ const UserPanel = ({ setView }) => {
                   </div>
                 )}
 
-                {/* Rodadas Finalizadas */}
                 {finishedRounds.length > 0 && (
                   <div>
                     <h3 className="text-lg font-semibold mb-3 flex items-center gap-2">
@@ -2432,7 +2907,6 @@ const UserPanel = ({ setView }) => {
                   </div>
                 )}
 
-                {/* Rodadas Futuras */}
                 {upcomingRounds.length > 0 && (
                   <div>
                     <h3 className="text-lg font-semibold mb-3 flex items-center gap-2">
@@ -2452,8 +2926,23 @@ const UserPanel = ({ setView }) => {
         )}
       </div>
 
-      {selectedRound && <PredictionForm round={selectedRound} />}
-      {showConfirmModal && pendingPredictions && <ConfirmModal round={pendingPredictions.round} predictionsData={pendingPredictions.predictions} onConfirm={confirmAndSave} onCancel={() => { setShowConfirmModal(false); setPendingPredictions(null); }} />}
+      {showEstablishmentModal && selectedRound && (
+        <EstablishmentModal 
+          onSelect={handleEstablishmentSelected} 
+          onCancel={() => { setShowEstablishmentModal(false); setSelectedRound(null); }} 
+        />
+      )}
+      {selectedRound && !showEstablishmentModal && <PredictionForm round={selectedRound} initialPredictions={editingPredictions} />}
+      {showConfirmModal && pendingPredictions && (
+        <ConfirmModal 
+          round={pendingPredictions.round} 
+          predictionsData={pendingPredictions.predictions}
+          cartelaCode={pendingPredictions.cartelaCode}
+          establishmentId={pendingPredictions.establishmentId}
+          onConfirm={confirmAndSave} 
+          onCancel={() => { setShowConfirmModal(false); setEditingPredictions(pendingPredictions.predictions); }} 
+        />
+      )}
     </div>
   );
 };
