@@ -1,7 +1,5 @@
 import React, { useState, useEffect, createContext, useContext } from 'react';
 import { Trophy, Users, Calendar, TrendingUp, LogOut, Eye, EyeOff, Plus, Edit2, Trash2, Upload, ExternalLink, X, UserPlus, Target, Award, ChevronDown, ChevronUp, Check } from 'lucide-react';
-
-// ==================== FIREBASE SETUP ====================
 import { initializeApp } from 'firebase/app';
 import { getFirestore, collection, addDoc, updateDoc, deleteDoc, doc, getDocs, onSnapshot, serverTimestamp } from 'firebase/firestore';
 
@@ -17,11 +15,9 @@ const firebaseConfig = {
 const app = initializeApp(firebaseConfig);
 const db = getFirestore(app);
 
-// ==================== CONTEXT ====================
 const AppContext = createContext();
 const useApp = () => useContext(AppContext);
 
-// ==================== TIMES SÉRIE A 2025 ====================
 const INITIAL_TEAMS = [
   { name: 'Athletico-PR', logo: 'https://logodetimes.com/times/athletico-paranaense/logo-athletico-paranaense-256.png' },
   { name: 'Atlético-GO', logo: 'https://logodetimes.com/times/atletico-goianiense/logo-atletico-goianiense-256.png' },
@@ -45,21 +41,20 @@ const INITIAL_TEAMS = [
   { name: 'Vitória', logo: 'https://logodetimes.com/times/vitoria/logo-vitoria-256.png' }
 ];
 
-// ==================== INICIALIZAÇÃO FIREBASE ====================
 const initializeDatabase = async () => {
   try {
     const usersSnapshot = await getDocs(collection(db, 'users'));
     const teamsSnapshot = await getDocs(collection(db, 'teams'));
     
     if (!usersSnapshot.empty && !teamsSnapshot.empty) {
-      console.log('✅ Database already initialized');
+      console.log('✅ Database initialized');
       return;
     }
 
-    console.log('🔄 Initializing database...');
+    console.log('🔄 Initializing...');
 
     const initialUsers = [
-      { whatsapp: '11999999999', password: 'admin123', name: 'Administrador', isAdmin: true, balance: 0 },
+      { whatsapp: '11999999999', password: 'kirk5364', name: 'Administrador', isAdmin: true, balance: 0 },
       { whatsapp: '11988888888', password: '123456', name: 'João Silva', isAdmin: false, balance: 150 },
       { whatsapp: '11977777777', password: '123456', name: 'Maria Santos', isAdmin: false, balance: 200 }
     ];
@@ -72,29 +67,23 @@ const initializeDatabase = async () => {
       await addDoc(collection(db, 'teams'), { ...team, createdAt: serverTimestamp() });
     }
 
-    console.log('🎉 Database initialized!');
+    console.log('🎉 Done!');
   } catch (error) {
-    console.error('Error initializing:', error);
+    console.error('Error:', error);
   }
 };
 
-// ==================== WHATSAPP ====================
 const sendWhatsAppMessage = (userPhone, roundName, predictions, teams) => {
-  let message = `🏆 *BOLÃO BRASILEIRÃO 2025*\n\n📋 *${roundName}*\n✅ Seus palpites foram confirmados!\n\n`;
-  
-  predictions.forEach((pred, index) => {
+  let message = `🏆 *BOLÃO BRASILEIRÃO 2025*\n\n📋 *${roundName}*\n✅ Confirmado!\n\n`;
+  predictions.forEach((pred, i) => {
     const homeTeam = teams.find(t => t.id === pred.match.homeTeamId);
     const awayTeam = teams.find(t => t.id === pred.match.awayTeamId);
-    message += `${index + 1}. ${homeTeam?.name} ${pred.homeScore} x ${pred.awayScore} ${awayTeam?.name}\n`;
+    message += `${i + 1}. ${homeTeam?.name} ${pred.homeScore} x ${pred.awayScore} ${awayTeam?.name}\n`;
   });
-  
-  message += `\n💰 Valor: R$ 15,00\n⚠️ *Palpites finalizados e não podem ser alterados*\n\nBoa sorte! 🍀`;
-  
-  const whatsappUrl = `https://wa.me/${userPhone.replace(/\D/g, '')}?text=${encodeURIComponent(message)}`;
-  window.open(whatsappUrl, '_blank');
+  message += `\n💰 R$ 15,00\n⚠️ *Não pode alterar*\n\nBoa sorte! 🍀`;
+  window.open(`https://wa.me/${userPhone.replace(/\D/g, '')}?text=${encodeURIComponent(message)}`, '_blank');
 };
 
-// ==================== APP PROVIDER ====================
 const AppProvider = ({ children }) => {
   const [currentUser, setCurrentUser] = useState(null);
   const [users, setUsers] = useState([]);
@@ -107,98 +96,50 @@ const AppProvider = ({ children }) => {
     const loadData = async () => {
       try {
         await initializeDatabase();
-        
-        const [usersData, teamsData, roundsData, predictionsData] = await Promise.all([
+        const [u, t, r, p] = await Promise.all([
           getDocs(collection(db, 'users')),
           getDocs(collection(db, 'teams')),
           getDocs(collection(db, 'rounds')),
           getDocs(collection(db, 'predictions'))
         ]);
-        
-        setUsers(usersData.docs.map(doc => ({ id: doc.id, ...doc.data() })));
-        setTeams(teamsData.docs.map(doc => ({ id: doc.id, ...doc.data() })).sort((a, b) => a.name.localeCompare(b.name)));
-        setRounds(roundsData.docs.map(doc => ({ id: doc.id, ...doc.data() })));
-        setPredictions(predictionsData.docs.map(doc => ({ id: doc.id, ...doc.data() })));
+        setUsers(u.docs.map(d => ({ id: d.id, ...d.data() })));
+        setTeams(t.docs.map(d => ({ id: d.id, ...d.data() })).sort((a, b) => a.name.localeCompare(b.name)));
+        setRounds(r.docs.map(d => ({ id: d.id, ...d.data() })));
+        setPredictions(p.docs.map(d => ({ id: d.id, ...d.data() })));
       } catch (error) {
-        console.error('Error loading:', error);
+        console.error('Load error:', error);
       } finally {
         setLoading(false);
       }
     };
-
     loadData();
   }, []);
 
   useEffect(() => {
-    const unsubscribeRounds = onSnapshot(collection(db, 'rounds'), (snapshot) => {
-      setRounds(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })));
-    });
-
-    const unsubscribeTeams = onSnapshot(collection(db, 'teams'), (snapshot) => {
-      setTeams(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })).sort((a, b) => a.name.localeCompare(b.name)));
-    });
-
-    const unsubscribePredictions = onSnapshot(collection(db, 'predictions'), (snapshot) => {
-      setPredictions(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })));
-    });
-
-    const unsubscribeUsers = onSnapshot(collection(db, 'users'), (snapshot) => {
-      setUsers(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })));
-    });
-
-    return () => {
-      unsubscribeRounds();
-      unsubscribeTeams();
-      unsubscribePredictions();
-      unsubscribeUsers();
-    };
+    const uns = [
+      onSnapshot(collection(db, 'rounds'), s => setRounds(s.docs.map(d => ({ id: d.id, ...d.data() })))),
+      onSnapshot(collection(db, 'teams'), s => setTeams(s.docs.map(d => ({ id: d.id, ...d.data() })).sort((a, b) => a.name.localeCompare(b.name)))),
+      onSnapshot(collection(db, 'predictions'), s => setPredictions(s.docs.map(d => ({ id: d.id, ...d.data() })))),
+      onSnapshot(collection(db, 'users'), s => setUsers(s.docs.map(d => ({ id: d.id, ...d.data() }))))
+    ];
+    return () => uns.forEach(u => u());
   }, []);
-
-  const addUser = async (userData) => {
-    const docRef = await addDoc(collection(db, 'users'), { ...userData, createdAt: serverTimestamp() });
-    return { id: docRef.id, ...userData };
-  };
-
-  const addTeam = async (teamData) => {
-    const docRef = await addDoc(collection(db, 'teams'), { ...teamData, createdAt: serverTimestamp() });
-    return { id: docRef.id, ...teamData };
-  };
-
-  const updateTeam = async (teamId, teamData) => {
-    await updateDoc(doc(db, 'teams', teamId), teamData);
-  };
-
-  const deleteTeam = async (teamId) => {
-    await deleteDoc(doc(db, 'teams', teamId));
-  };
-
-  const addRound = async (roundData) => {
-    const docRef = await addDoc(collection(db, 'rounds'), { ...roundData, createdAt: serverTimestamp() });
-    return { id: docRef.id, ...roundData };
-  };
-
-  const updateRound = async (roundId, roundData) => {
-    await updateDoc(doc(db, 'rounds', roundId), roundData);
-  };
-
-  const deleteRound = async (roundId) => {
-    await deleteDoc(doc(db, 'rounds', roundId));
-  };
-
-  const addPrediction = async (predictionData) => {
-    const docRef = await addDoc(collection(db, 'predictions'), { ...predictionData, createdAt: serverTimestamp() });
-    return { id: docRef.id, ...predictionData };
-  };
 
   const value = {
     currentUser, setCurrentUser, users, teams, rounds, predictions, loading,
-    addUser, addTeam, updateTeam, deleteTeam, addRound, updateRound, deleteRound, addPrediction
+    addUser: async (d) => { const r = await addDoc(collection(db, 'users'), { ...d, createdAt: serverTimestamp() }); return { id: r.id, ...d }; },
+    addTeam: async (d) => { const r = await addDoc(collection(db, 'teams'), { ...d, createdAt: serverTimestamp() }); return { id: r.id, ...d }; },
+    updateTeam: async (id, d) => await updateDoc(doc(db, 'teams', id), d),
+    deleteTeam: async (id) => await deleteDoc(doc(db, 'teams', id)),
+    addRound: async (d) => { const r = await addDoc(collection(db, 'rounds'), { ...d, createdAt: serverTimestamp() }); return { id: r.id, ...d }; },
+    updateRound: async (id, d) => await updateDoc(doc(db, 'rounds', id), d),
+    deleteRound: async (id) => await deleteDoc(doc(db, 'rounds', id)),
+    addPrediction: async (d) => { const r = await addDoc(collection(db, 'predictions'), { ...d, createdAt: serverTimestamp() }); return { id: r.id, ...d }; }
   };
 
   return <AppContext.Provider value={value}>{children}</AppContext.Provider>;
 };
 
-// ==================== LOGIN SCREEN ====================
 const LoginScreen = ({ setView }) => {
   const { users, setCurrentUser, addUser } = useApp();
   const [whatsapp, setWhatsapp] = useState('');
@@ -206,7 +147,7 @@ const LoginScreen = ({ setView }) => {
   const [showPassword, setShowPassword] = useState(false);
   const [error, setError] = useState('');
   const [showRegister, setShowRegister] = useState(false);
-  const [registerData, setRegisterData] = useState({ name: '', whatsapp: '', password: '', confirmPassword: '' });
+  const [reg, setReg] = useState({ name: '', whatsapp: '', password: '', confirmPassword: '' });
 
   const handleLogin = () => {
     const user = users.find(u => u.whatsapp === whatsapp && u.password === password);
@@ -220,35 +161,43 @@ const LoginScreen = ({ setView }) => {
   };
 
   const handleRegister = async () => {
-    if (!registerData.name || !registerData.whatsapp || !registerData.password) {
-      setError('Preencha todos os campos!');
-      return;
-    }
-
-    if (registerData.password !== registerData.confirmPassword) {
-      setError('As senhas não coincidem!');
-      return;
-    }
-
-    if (registerData.password.length < 6) {
-      setError('A senha deve ter pelo menos 6 caracteres!');
-      return;
-    }
-
-    if (users.find(u => u.whatsapp === registerData.whatsapp)) {
-      setError('Este WhatsApp já está cadastrado!');
-      return;
-    }
-
+    if (!reg.name || !reg.whatsapp || !reg.password) return setError('Preencha todos!');
+    if (reg.password !== reg.confirmPassword) return setError('Senhas diferentes!');
+    if (reg.password.length < 6) return setError('Senha mínimo 6!');
+    if (users.find(u => u.whatsapp === reg.whatsapp)) return setError('WhatsApp já cadastrado!');
     try {
-      await addUser({ name: registerData.name, whatsapp: registerData.whatsapp, password: registerData.password, isAdmin: false, balance: 0 });
-      alert('✅ Cadastro realizado! Faça login para continuar.');
+      await addUser({ name: reg.name, whatsapp: reg.whatsapp, password: reg.password, isAdmin: false, balance: 0 });
+      alert('✅ Cadastrado!');
       setShowRegister(false);
-      setWhatsapp(registerData.whatsapp);
-      setRegisterData({ name: '', whatsapp: '', password: '', confirmPassword: '' });
+      setWhatsapp(reg.whatsapp);
+      setReg({ name: '', whatsapp: '', password: '', confirmPassword: '' });
       setError('');
-    } catch (error) {
-      setError('Erro ao criar conta: ' + error.message);
+    } catch (e) {
+      setError('Erro: ' + e.message);
+    }
+  };
+
+  const handleForgotPassword = () => {
+    const phone = prompt('Digite seu WhatsApp (apenas admin):');
+    if (phone === '11999999999') {
+      const newPassword = prompt('Digite a nova senha (mínimo 6 caracteres):');
+      if (newPassword && newPassword.length >= 6) {
+        const confirmPassword = prompt('Confirme a nova senha:');
+        if (newPassword === confirmPassword) {
+          const adminUser = users.find(u => u.whatsapp === '11999999999');
+          if (adminUser) {
+            updateDoc(doc(db, 'users', adminUser.id), { password: newPassword })
+              .then(() => alert('✅ Senha alterada com sucesso!'))
+              .catch(() => alert('❌ Erro ao alterar senha'));
+          }
+        } else {
+          alert('As senhas não coincidem!');
+        }
+      } else {
+        alert('Senha deve ter no mínimo 6 caracteres!');
+      }
+    } else {
+      alert('Apenas o administrador pode redefinir senha!');
     }
   };
 
@@ -257,33 +206,29 @@ const LoginScreen = ({ setView }) => {
       <div className="min-h-screen bg-gradient-to-br from-green-600 via-green-700 to-green-900 flex items-center justify-center p-4">
         <div className="bg-white rounded-2xl shadow-2xl p-8 w-full max-w-md">
           <div className="flex justify-between items-center mb-6">
-            <h2 className="text-2xl font-bold text-gray-800">Criar Conta</h2>
-            <button onClick={() => setShowRegister(false)} className="text-gray-500 hover:text-gray-700">
-              <X size={24} />
-            </button>
+            <h2 className="text-2xl font-bold">Criar Conta</h2>
+            <button onClick={() => setShowRegister(false)}><X size={24} /></button>
           </div>
-
           {error && <div className="bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded-lg mb-4">{error}</div>}
-
           <div className="space-y-4">
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-2">Nome Completo</label>
-              <input type="text" placeholder="Seu nome" value={registerData.name} onChange={(e) => setRegisterData({ ...registerData, name: e.target.value })} className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-green-500" />
+              <label className="block text-sm font-medium mb-2">Nome</label>
+              <input type="text" placeholder="Seu nome" value={reg.name} onChange={(e) => setReg({ ...reg, name: e.target.value })} className="w-full px-4 py-3 border rounded-lg" />
             </div>
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-2">WhatsApp</label>
-              <input type="tel" placeholder="11999999999" value={registerData.whatsapp} onChange={(e) => setRegisterData({ ...registerData, whatsapp: e.target.value.replace(/\D/g, '') })} className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-green-500" />
+              <label className="block text-sm font-medium mb-2">WhatsApp</label>
+              <input type="tel" placeholder="11999999999" value={reg.whatsapp} onChange={(e) => setReg({ ...reg, whatsapp: e.target.value.replace(/\D/g, '') })} className="w-full px-4 py-3 border rounded-lg" />
             </div>
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-2">Senha</label>
-              <input type="password" placeholder="Mínimo 6 caracteres" value={registerData.password} onChange={(e) => setRegisterData({ ...registerData, password: e.target.value })} className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-green-500" />
+              <label className="block text-sm font-medium mb-2">Senha</label>
+              <input type="password" placeholder="Mínimo 6" value={reg.password} onChange={(e) => setReg({ ...reg, password: e.target.value })} className="w-full px-4 py-3 border rounded-lg" />
             </div>
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-2">Confirmar Senha</label>
-              <input type="password" placeholder="Digite novamente" value={registerData.confirmPassword} onChange={(e) => setRegisterData({ ...registerData, confirmPassword: e.target.value })} className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-green-500" />
+              <label className="block text-sm font-medium mb-2">Confirmar</label>
+              <input type="password" placeholder="Digite novamente" value={reg.confirmPassword} onChange={(e) => setReg({ ...reg, confirmPassword: e.target.value })} className="w-full px-4 py-3 border rounded-lg" />
             </div>
-            <button onClick={handleRegister} className="w-full bg-green-600 text-white py-3 rounded-lg font-semibold hover:bg-green-700">Criar Conta</button>
-            <button onClick={() => { setShowRegister(false); setError(''); }} className="w-full border-2 border-gray-300 text-gray-700 py-3 rounded-lg font-semibold hover:bg-gray-50">Já tenho conta</button>
+            <button onClick={handleRegister} className="w-full bg-green-600 text-white py-3 rounded-lg font-semibold">Criar</button>
+            <button onClick={() => { setShowRegister(false); setError(''); }} className="w-full border-2 text-gray-700 py-3 rounded-lg font-semibold">Já tenho</button>
           </div>
         </div>
       </div>
@@ -297,42 +242,37 @@ const LoginScreen = ({ setView }) => {
           <div className="bg-green-600 w-20 h-20 rounded-full flex items-center justify-center mx-auto mb-4">
             <Trophy className="w-12 h-12 text-white" />
           </div>
-          <h1 className="text-3xl font-bold text-gray-800">Bolão Brasileirão</h1>
-          <p className="text-gray-600 mt-2">Temporada 2025 - Série A</p>
+          <h1 className="text-3xl font-bold">Bolão Brasileirão</h1>
+          <p className="text-gray-600 mt-2">2025 - Série A</p>
         </div>
-
         {error && <div className="bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded-lg mb-4">{error}</div>}
-
         <div className="space-y-4">
           <div>
-            <label className="block text-sm font-medium text-gray-700 mb-2">WhatsApp</label>
-            <input type="tel" placeholder="11999999999" value={whatsapp} onChange={(e) => setWhatsapp(e.target.value)} className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-green-500" />
+            <label className="block text-sm font-medium mb-2">WhatsApp</label>
+            <input type="tel" placeholder="11999999999" value={whatsapp} onChange={(e) => setWhatsapp(e.target.value)} className="w-full px-4 py-3 border rounded-lg" />
           </div>
           <div>
-            <label className="block text-sm font-medium text-gray-700 mb-2">Senha</label>
+            <label className="block text-sm font-medium mb-2">Senha</label>
             <div className="relative">
-              <input type={showPassword ? 'text' : 'password'} placeholder="••••••••" value={password} onChange={(e) => setPassword(e.target.value)} onKeyPress={(e) => e.key === 'Enter' && handleLogin()} className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-green-500" />
-              <button onClick={() => setShowPassword(!showPassword)} className="absolute right-3 top-1/2 transform -translate-y-1/2 text-gray-500">
+              <input type={showPassword ? 'text' : 'password'} placeholder="••••••••" value={password} onChange={(e) => setPassword(e.target.value)} onKeyPress={(e) => e.key === 'Enter' && handleLogin()} className="w-full px-4 py-3 border rounded-lg" />
+              <button onClick={() => setShowPassword(!showPassword)} className="absolute right-3 top-1/2 transform -translate-y-1/2">
                 {showPassword ? <EyeOff size={20} /> : <Eye size={20} />}
               </button>
             </div>
           </div>
-          <button onClick={handleLogin} className="w-full bg-green-600 text-white py-3 rounded-lg font-semibold hover:bg-green-700">Entrar</button>
-          <button onClick={() => { setShowRegister(true); setError(''); }} className="w-full border-2 border-green-600 text-green-600 py-3 rounded-lg font-semibold hover:bg-green-50 flex items-center justify-center gap-2">
-            <UserPlus size={20} /> Criar Nova Conta
+          <button onClick={handleLogin} className="w-full bg-green-600 text-white py-3 rounded-lg font-semibold">Entrar</button>
+          <button onClick={handleForgotPassword} className="w-full text-green-600 py-2 text-sm font-medium hover:underline">
+            Esqueci minha senha (apenas admin)
           </button>
-        </div>
-
-        <div className="mt-6 text-center text-sm text-gray-600">
-          <p>💡 Usuário de teste:</p>
-          <p className="mt-2">Admin: 11999999999 / admin123</p>
+          <button onClick={() => { setShowRegister(true); setError(''); }} className="w-full border-2 border-green-600 text-green-600 py-3 rounded-lg font-semibold flex items-center justify-center gap-2">
+            <UserPlus size={20} /> Criar Conta
+          </button>
         </div>
       </div>
     </div>
   );
 };
 
-// ==================== MODALS ====================
 const TeamForm = ({ team, onSave, onCancel }) => {
   const [formData, setFormData] = useState(team || { name: '', logo: '', logoType: 'url' });
 
@@ -490,7 +430,6 @@ const RoundForm = ({ round, teams, rounds, onSave, onCancel }) => {
   );
 };
 
-// ==================== ADMIN PANEL ====================
 const AdminPanel = ({ setView }) => {
   const { currentUser, setCurrentUser, teams, rounds, users, predictions, addRound, updateRound, deleteRound, addTeam, updateTeam, deleteTeam } = useApp();
   const [activeTab, setActiveTab] = useState('rounds');
@@ -704,12 +643,10 @@ const AdminPanel = ({ setView }) => {
   );
 };
 
-// ==================== USER PANEL ====================
 const UserPanel = ({ setView }) => {
   const { currentUser, setCurrentUser, teams, rounds, predictions, users, addPrediction } = useApp();
   const [activeTab, setActiveTab] = useState('predictions');
   const [selectedRound, setSelectedRound] = useState(null);
-  const [expandedRound, setExpandedRound] = useState(null);
   const [showConfirmModal, setShowConfirmModal] = useState(false);
   const [pendingPredictions, setPendingPredictions] = useState(null);
 
@@ -1025,7 +962,6 @@ const UserPanel = ({ setView }) => {
   );
 };
 
-// ==================== MAIN APP ====================
 function App() {
   const { currentUser, loading } = useApp();
   const [view, setView] = useState('login');
