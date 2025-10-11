@@ -18,28 +18,28 @@ const db = getFirestore(app);
 const AppContext = createContext();
 const useApp = () => useContext(AppContext);
 
-// TIMES CORRETOS DA SÉRIE A 2025 (FONTE: CBF)
-const INITIAL_TEAMS = [
-  { name: 'Atlético-MG', logo: 'https://logodetimes.com/times/atletico-mineiro/logo-atletico-mineiro-256.png' },
-  { name: 'Bahia', logo: 'https://logodetimes.com/times/bahia/logo-bahia-256.png' },
-  { name: 'Botafogo', logo: 'https://logodetimes.com/times/botafogo/logo-botafogo-256.png' },
-  { name: 'Ceará', logo: 'https://logodetimes.com/times/ceara/logo-ceara-256.png' },
-  { name: 'Corinthians', logo: 'https://logodetimes.com/times/corinthians/logo-corinthians-256.png' },
-  { name: 'Cruzeiro', logo: 'https://logodetimes.com/times/cruzeiro/logo-cruzeiro-256.png' },
-  { name: 'Flamengo', logo: 'https://logodetimes.com/times/flamengo/logo-flamengo-256.png' },
-  { name: 'Fluminense', logo: 'https://logodetimes.com/times/fluminense/logo-fluminense-256.png' },
-  { name: 'Fortaleza', logo: 'https://logodetimes.com/times/fortaleza/logo-fortaleza-256.png' },
-  { name: 'Grêmio', logo: 'https://logodetimes.com/times/gremio/logo-gremio-256.png' },
-  { name: 'Internacional', logo: 'https://logodetimes.com/times/internacional/logo-internacional-256.png' },
-  { name: 'Juventude', logo: 'https://logodetimes.com/times/juventude/logo-juventude-256.png' },
-  { name: 'Mirassol', logo: 'https://logodetimes.com/times/mirassol/logo-mirassol-256.png' },
+// TIMES OFICIAIS DA SÉRIE A 2025 - CBF
+const SERIE_A_2025_TEAMS = [
   { name: 'Palmeiras', logo: 'https://logodetimes.com/times/palmeiras/logo-palmeiras-256.png' },
-  { name: 'RB Bragantino', logo: 'https://logodetimes.com/times/bragantino/logo-bragantino-256.png' },
-  { name: 'Santos', logo: 'https://logodetimes.com/times/santos/logo-santos-256.png' },
+  { name: 'Flamengo', logo: 'https://logodetimes.com/times/flamengo/logo-flamengo-256.png' },
+  { name: 'Cruzeiro', logo: 'https://logodetimes.com/times/cruzeiro/logo-cruzeiro-256.png' },
+  { name: 'Mirassol', logo: 'https://logodetimes.com/times/mirassol/logo-mirassol-256.png' },
+  { name: 'Botafogo', logo: 'https://logodetimes.com/times/botafogo/logo-botafogo-256.png' },
+  { name: 'Bahia', logo: 'https://logodetimes.com/times/bahia/logo-bahia-256.png' },
+  { name: 'Fluminense', logo: 'https://logodetimes.com/times/fluminense/logo-fluminense-256.png' },
   { name: 'São Paulo', logo: 'https://logodetimes.com/times/sao-paulo/logo-sao-paulo-256.png' },
-  { name: 'Sport', logo: 'https://logodetimes.com/times/sport/logo-sport-256.png' },
-  { name: 'Vasco', logo: 'https://logodetimes.com/times/vasco/logo-vasco-256.png' },
-  { name: 'Vitória', logo: 'https://logodetimes.com/times/vitoria/logo-vitoria-256.png' }
+  { name: 'Red Bull Bragantino', logo: 'https://logodetimes.com/times/bragantino/logo-bragantino-256.png' },
+  { name: 'Ceará', logo: 'https://logodetimes.com/times/ceara/logo-ceara-256.png' },
+  { name: 'Vasco da Gama', logo: 'https://logodetimes.com/times/vasco/logo-vasco-256.png' },
+  { name: 'Corinthians', logo: 'https://logodetimes.com/times/corinthians/logo-corinthians-256.png' },
+  { name: 'Grêmio', logo: 'https://logodetimes.com/times/gremio/logo-gremio-256.png' },
+  { name: 'Atlético Mineiro', logo: 'https://logodetimes.com/times/atletico-mineiro/logo-atletico-mineiro-256.png' },
+  { name: 'Internacional', logo: 'https://logodetimes.com/times/internacional/logo-internacional-256.png' },
+  { name: 'Santos', logo: 'https://logodetimes.com/times/santos/logo-santos-256.png' },
+  { name: 'Vitória', logo: 'https://logodetimes.com/times/vitoria/logo-vitoria-256.png' },
+  { name: 'Fortaleza', logo: 'https://logodetimes.com/times/fortaleza/logo-fortaleza-256.png' },
+  { name: 'Juventude', logo: 'https://logodetimes.com/times/juventude/logo-juventude-256.png' },
+  { name: 'Sport', logo: 'https://logodetimes.com/times/sport/logo-sport-256.png' }
 ];
 
 const initializeDatabase = async () => {
@@ -64,7 +64,7 @@ const initializeDatabase = async () => {
       await addDoc(collection(db, 'users'), { ...user, createdAt: serverTimestamp() });
     }
 
-    for (const team of INITIAL_TEAMS) {
+    for (const team of SERIE_A_2025_TEAMS) {
       await addDoc(collection(db, 'teams'), { ...team, createdAt: serverTimestamp() });
     }
 
@@ -133,6 +133,21 @@ const AppProvider = ({ children }) => {
     addTeam: async (d) => { const r = await addDoc(collection(db, 'teams'), { ...d, createdAt: serverTimestamp() }); return { id: r.id, ...d }; },
     updateTeam: async (id, d) => await updateDoc(doc(db, 'teams', id), d),
     deleteTeam: async (id) => await deleteDoc(doc(db, 'teams', id)),
+    deleteAllTeams: async () => {
+      const snapshot = await getDocs(collection(db, 'teams'));
+      for (const doc of snapshot.docs) {
+        await deleteDoc(doc.ref);
+      }
+    },
+    resetTeamsToSerieA2025: async () => {
+      const snapshot = await getDocs(collection(db, 'teams'));
+      for (const doc of snapshot.docs) {
+        await deleteDoc(doc.ref);
+      }
+      for (const team of SERIE_A_2025_TEAMS) {
+        await addDoc(collection(db, 'teams'), { ...team, createdAt: serverTimestamp() });
+      }
+    },
     addRound: async (d) => { const r = await addDoc(collection(db, 'rounds'), { ...d, createdAt: serverTimestamp() }); return { id: r.id, ...d }; },
     updateRound: async (id, d) => await updateDoc(doc(db, 'rounds', id), d),
     deleteRound: async (id) => await deleteDoc(doc(db, 'rounds', id)),
@@ -480,13 +495,25 @@ const PasswordModal = ({ user, onSave, onCancel }) => {
 };
 
 const AdminPanel = ({ setView }) => {
-  const { currentUser, setCurrentUser, teams, rounds, users, predictions, addRound, updateRound, deleteRound, addTeam, updateTeam, deleteTeam, updateUser } = useApp();
+  const { currentUser, setCurrentUser, teams, rounds, users, predictions, addRound, updateRound, deleteRound, addTeam, updateTeam, deleteTeam, updateUser, resetTeamsToSerieA2025 } = useApp();
   const [activeTab, setActiveTab] = useState('rounds');
   const [editingRound, setEditingRound] = useState(null);
   const [editingTeam, setEditingTeam] = useState(null);
   const [showRoundForm, setShowRoundForm] = useState(false);
   const [showTeamForm, setShowTeamForm] = useState(false);
   const [editingPassword, setEditingPassword] = useState(null);
+
+  const handleResetTeams = async () => {
+    if (!confirm('⚠️ ATENÇÃO!\n\nIsso irá DELETAR todos os times cadastrados e recarregar apenas os 20 times oficiais da Série A 2025.\n\n⚠️ CUIDADO: Se houver rodadas criadas com times antigos, elas podem ficar quebradas!\n\nDeseja continuar?')) {
+      return;
+    }
+    try {
+      await resetTeamsToSerieA2025();
+      alert('✅ Times resetados com sucesso!\n\n20 times oficiais da Série A 2025 foram carregados.');
+    } catch (error) {
+      alert('❌ Erro ao resetar times: ' + error.message);
+    }
+  };
 
   const saveRound = async (roundData) => {
     try {
@@ -650,9 +677,14 @@ const AdminPanel = ({ setView }) => {
           <div>
             <div className="flex justify-between mb-6">
               <h2 className="text-2xl font-bold">Gerenciar Times</h2>
-              <button onClick={() => { setEditingTeam(null); setShowTeamForm(true); }} className="flex items-center gap-2 bg-green-600 text-white px-6 py-3 rounded-lg">
-                <Plus size={20} /> Novo Time
-              </button>
+              <div className="flex gap-3">
+                <button onClick={handleResetTeams} className="flex items-center gap-2 bg-orange-600 text-white px-6 py-3 rounded-lg hover:bg-orange-700">
+                  <Trophy size={20} /> Resetar para Série A 2025
+                </button>
+                <button onClick={() => { setEditingTeam(null); setShowTeamForm(true); }} className="flex items-center gap-2 bg-green-600 text-white px-6 py-3 rounded-lg">
+                  <Plus size={20} /> Novo Time
+                </button>
+              </div>
             </div>
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
               {teams.map((team) => (
