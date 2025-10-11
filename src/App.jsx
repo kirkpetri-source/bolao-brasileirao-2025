@@ -46,6 +46,7 @@ const initializeDatabase = async () => {
   try {
     const usersSnapshot = await getDocs(collection(db, 'users'));
     const teamsSnapshot = await getDocs(collection(db, 'teams'));
+    const settingsSnapshot = await getDocs(collection(db, 'settings'));
     
     if (!usersSnapshot.empty && !teamsSnapshot.empty) {
       console.log('✅ Database initialized');
@@ -68,20 +69,32 @@ const initializeDatabase = async () => {
       await addDoc(collection(db, 'teams'), { ...team, createdAt: serverTimestamp() });
     }
 
+    // Criar configurações padrão
+    if (settingsSnapshot.empty) {
+      await addDoc(collection(db, 'settings'), {
+        whatsappMessage: '🏆 *BOLÃO BRASILEIRÃO 2025*\n\n📋 *{RODADA}*\n✅ Confirmado!\n\n{PALPITES}\n\n💰 R$ 15,00\n⚠️ *Não pode alterar após pagamento*\n\nBoa sorte! 🍀',
+        createdAt: serverTimestamp()
+      });
+    }
+
     console.log('🎉 Done!');
   } catch (error) {
     console.error('Error:', error);
   }
 };
 
-const sendWhatsAppMessage = (userPhone, roundName, predictions, teams) => {
-  let message = `🏆 *BOLÃO BRASILEIRÃO 2025*\n\n📋 *${roundName}*\n✅ Confirmado!\n\n`;
+const sendWhatsAppMessage = (userPhone, roundName, predictions, teams, messageTemplate) => {
+  let palpitesText = '';
   predictions.forEach((pred, i) => {
     const homeTeam = teams.find(t => t.id === pred.match.homeTeamId);
     const awayTeam = teams.find(t => t.id === pred.match.awayTeamId);
-    message += `${i + 1}. ${homeTeam?.name} ${pred.homeScore} x ${pred.awayScore} ${awayTeam?.name}\n`;
+    palpitesText += `${i + 1}. ${homeTeam?.name} ${pred.homeScore} x ${pred.awayScore} ${awayTeam?.name}\n`;
   });
-  message += `\n💰 R$ 15,00\n⚠️ *Não pode alterar*\n\nBoa sorte! 🍀`;
+  
+  const message = (messageTemplate || '🏆 *BOLÃO BRASILEIRÃO 2025*\n\n📋 *{RODADA}*\n✅ Confirmado!\n\n{PALPITES}\n\n💰 R$ 15,00\n⚠️ *Não pode alterar após pagamento*\n\nBoa sorte! 🍀')
+    .replace('{RODADA}', roundName)
+    .replace('{PALPITES}', palpitesText.trim());
+  
   window.open(`https://wa.me/${userPhone.replace(/\D/g, '')}?text=${encodeURIComponent(message)}`, '_blank');
 };
 
@@ -91,22 +104,25 @@ const AppProvider = ({ children }) => {
   const [teams, setTeams] = useState([]);
   const [rounds, setRounds] = useState([]);
   const [predictions, setPredictions] = useState([]);
+  const [settings, setSettings] = useState(null);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
     const loadData = async () => {
       try {
         await initializeDatabase();
-        const [u, t, r, p] = await Promise.all([
+        const [u, t, r, p, s] = await Promise.all([
           getDocs(collection(db, 'users')),
           getDocs(collection(db, 'teams')),
           getDocs(collection(db, 'rounds')),
-          getDocs(collection(db, 'predictions'))
+          getDocs(collection(db, 'predictions')),
+          getDocs(collection(db, 'settings'))
         ]);
         setUsers(u.docs.map(d => ({ id: d.id, ...d.data() })));
         setTeams(t.docs.map(d => ({ id: d.id, ...d.data() })).sort((a, b) => a.name.localeCompare(b.name)));
         setRounds(r.docs.map(d => ({ id: d.id, ...d.data() })));
         setPredictions(p.docs.map(d => ({ id: d.id, ...d.data() })));
+        setSettings(s.docs.length > 0 ? { id: s.docs[0].id, ...s.docs[0].data() } : null);
       } catch (error) {
         console.error('Load error:', error);
       } finally {
@@ -121,13 +137,14 @@ const AppProvider = ({ children }) => {
       onSnapshot(collection(db, 'rounds'), s => setRounds(s.docs.map(d => ({ id: d.id, ...d.data() })))),
       onSnapshot(collection(db, 'teams'), s => setTeams(s.docs.map(d => ({ id: d.id, ...d.data() })).sort((a, b) => a.name.localeCompare(b.name)))),
       onSnapshot(collection(db, 'predictions'), s => setPredictions(s.docs.map(d => ({ id: d.id, ...d.data() })))),
-      onSnapshot(collection(db, 'users'), s => setUsers(s.docs.map(d => ({ id: d.id, ...d.data() }))))
+      onSnapshot(collection(db, 'users'), s => setUsers(s.docs.map(d => ({ id: d.id, ...d.data() })))),
+      onSnapshot(collection(db, 'settings'), s => setSettings(s.docs.length > 0 ? { id: s.docs[0].id, ...s.docs[0].data() } : null))
     ];
     return () => uns.forEach(u => u());
   }, []);
 
   const value = {
-    currentUser, setCurrentUser, users, teams, rounds, predictions, loading,
+    currentUser, setCurrentUser, users, teams, rounds, predictions, settings, loading,
     addUser: async (d) => { const r = await addDoc(collection(db, 'users'), { ...d, createdAt: serverTimestamp() }); return { id: r.id, ...d }; },
     updateUser: async (id, d) => await updateDoc(doc(db, 'users', id), d),
     deleteUser: async (id) => await deleteDoc(doc(db, 'users', id)),
@@ -153,7 +170,12 @@ const AppProvider = ({ children }) => {
     updateRound: async (id, d) => await updateDoc(doc(db, 'rounds', id), d),
     deleteRound: async (id) => await deleteDoc(doc(db, 'rounds', id)),
     addPrediction: async (d) => { const r = await addDoc(collection(db, 'predictions'), { ...d, paid: false, createdAt: serverTimestamp() }); return { id: r.id, ...d }; },
-    updatePrediction: async (id, d) => await updateDoc(doc(db, 'predictions', id), d)
+    updatePrediction: async (id, d) => await updateDoc(doc(db, 'predictions', id), d),
+    updateSettings: async (d) => {
+      if (settings?.id) {
+        await updateDoc(doc(db, 'settings', settings.id), d);
+      }
+    }
   };
 
   return <AppContext.Provider value={value}>{children}</AppContext.Provider>;
@@ -497,15 +519,22 @@ const PasswordModal = ({ user, onSave, onCancel }) => {
 };
 
 const AdminPanel = ({ setView }) => {
-  const { currentUser, setCurrentUser, teams, rounds, users, predictions, addRound, updateRound, deleteRound, addTeam, updateTeam, deleteTeam, updateUser, deleteUser, resetTeamsToSerieA2025, updatePrediction } = useApp();
-  const [activeTab, setActiveTab] = useState('rounds');
+  const { currentUser, setCurrentUser, teams, rounds, users, predictions, settings, addRound, updateRound, deleteRound, addTeam, updateTeam, deleteTeam, updateUser, deleteUser, resetTeamsToSerieA2025, updatePrediction, updateSettings } = useApp();
+  const [activeTab, setActiveTab] = useState('dashboard');
   const [editingRound, setEditingRound] = useState(null);
   const [editingTeam, setEditingTeam] = useState(null);
   const [showRoundForm, setShowRoundForm] = useState(false);
   const [showTeamForm, setShowTeamForm] = useState(false);
   const [editingPassword, setEditingPassword] = useState(null);
   const [selectedFinanceRound, setSelectedFinanceRound] = useState(null);
-  const [paymentFilter, setPaymentFilter] = useState('all'); // all, paid, pending
+  const [paymentFilter, setPaymentFilter] = useState('all');
+  const [whatsappMessage, setWhatsappMessage] = useState(settings?.whatsappMessage || '');
+
+  useEffect(() => {
+    if (settings?.whatsappMessage) {
+      setWhatsappMessage(settings.whatsappMessage);
+    }
+  }, [settings]);
 
   const handleDeleteUser = async (user) => {
     if (!confirm(`⚠️ ATENÇÃO!\n\nDeseja realmente excluir o usuário "${user.name}"?\n\nIsso também excluirá todos os palpites deste usuário!\n\nEsta ação não pode ser desfeita.`)) {
@@ -571,6 +600,80 @@ const AdminPanel = ({ setView }) => {
       totalReceived,
       totalPending
     };
+  };
+
+  const getTotalFinancialSummary = () => {
+    const finishedAndClosedRounds = rounds.filter(r => r.status === 'finished' || r.status === 'closed');
+    let totalExpected = 0;
+    let totalReceived = 0;
+    let totalPending = 0;
+
+    finishedAndClosedRounds.forEach(round => {
+      const summary = getRoundFinancialSummary(round.id);
+      totalExpected += summary.totalExpected;
+      totalReceived += summary.totalReceived;
+      totalPending += summary.totalPending;
+    });
+
+    const prizePool = totalReceived * 0.9; // 90% para premiação
+    const adminFee = totalReceived * 0.1; // 10% taxa administrativa
+
+    return {
+      totalExpected,
+      totalReceived,
+      totalPending,
+      prizePool,
+      adminFee
+    };
+  };
+
+  const getWinners = () => {
+    const finishedRounds = rounds.filter(r => r.status === 'finished');
+    if (finishedRounds.length === 0) return [];
+
+    const userScores = users.filter(u => !u.isAdmin).map(user => {
+      let totalPoints = 0;
+      finishedRounds.forEach(round => {
+        const isPaid = getPaymentStatus(user.id, round.id);
+        if (!isPaid) return; // Só conta se pagou
+
+        round.matches?.forEach(match => {
+          const pred = predictions.find(p => 
+            p.userId === user.id && 
+            p.roundId === round.id && 
+            p.matchId === match.id
+          );
+          
+          if (pred && match.finished && match.homeScore !== null && match.awayScore !== null) {
+            if (pred.homeScore === match.homeScore && pred.awayScore === match.awayScore) {
+              totalPoints += 3;
+            } else {
+              const predResult = pred.homeScore > pred.awayScore ? 'home' : pred.homeScore < pred.awayScore ? 'away' : 'draw';
+              const matchResult = match.homeScore > match.awayScore ? 'home' : match.homeScore < match.awayScore ? 'away' : 'draw';
+              if (predResult === matchResult) {
+                totalPoints += 1;
+              }
+            }
+          }
+        });
+      });
+      
+      return { user, points: totalPoints };
+    });
+
+    const maxPoints = Math.max(...userScores.map(s => s.points));
+    if (maxPoints === 0) return [];
+
+    return userScores.filter(s => s.points === maxPoints);
+  };
+
+  const handleSaveWhatsAppMessage = async () => {
+    try {
+      await updateSettings({ whatsappMessage });
+      alert('✅ Mensagem atualizada com sucesso!');
+    } catch (error) {
+      alert('❌ Erro ao salvar: ' + error.message);
+    }
   };
 
   const handleResetTeams = async () => {
@@ -706,13 +809,15 @@ const AdminPanel = ({ setView }) => {
 
       <div className="bg-white border-b">
         <div className="max-w-7xl mx-auto px-4">
-          <div className="flex gap-6">
-            {['rounds', 'teams', 'participants', 'financial'].map(tab => (
-              <button key={tab} onClick={() => setActiveTab(tab)} className={`py-4 px-2 border-b-2 font-medium ${activeTab === tab ? 'border-green-600 text-green-600' : 'border-transparent text-gray-500'}`}>
+          <div className="flex gap-6 overflow-x-auto">
+            {['dashboard', 'rounds', 'teams', 'participants', 'financial', 'settings'].map(tab => (
+              <button key={tab} onClick={() => setActiveTab(tab)} className={`py-4 px-2 border-b-2 font-medium whitespace-nowrap ${activeTab === tab ? 'border-green-600 text-green-600' : 'border-transparent text-gray-500'}`}>
+                {tab === 'dashboard' && <><Trophy className="inline mr-2" size={18} />Dashboard</>}
                 {tab === 'rounds' && <><Calendar className="inline mr-2" size={18} />Rodadas</>}
                 {tab === 'teams' && <><Users className="inline mr-2" size={18} />Times</>}
                 {tab === 'participants' && <><TrendingUp className="inline mr-2" size={18} />Participantes</>}
                 {tab === 'financial' && <><DollarSign className="inline mr-2" size={18} />Financeiro</>}
+                {tab === 'settings' && <><Edit2 className="inline mr-2" size={18} />Configurações</>}
               </button>
             ))}
           </div>
@@ -720,6 +825,186 @@ const AdminPanel = ({ setView }) => {
       </div>
 
       <div className="max-w-7xl mx-auto px-4 py-6">
+        {activeTab === 'dashboard' && (
+          <div>
+            <h2 className="text-2xl font-bold mb-6">Dashboard Geral</h2>
+            
+            {(() => {
+              const financialSummary = getTotalFinancialSummary();
+              const winners = getWinners();
+              const prizePerWinner = winners.length > 0 ? financialSummary.prizePool / winners.length : 0;
+
+              return (
+                <div className="space-y-6">
+                  {/* Resumo Financeiro Total */}
+                  <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+                    <div className="bg-blue-50 border-2 border-blue-200 rounded-xl p-6">
+                      <div className="flex items-center justify-between mb-3">
+                        <DollarSign className="text-blue-500" size={32} />
+                      </div>
+                      <p className="text-blue-600 text-sm font-medium mb-1">Total Arrecadado</p>
+                      <p className="text-3xl font-bold text-blue-900">R$ {financialSummary.totalReceived.toFixed(2)}</p>
+                    </div>
+
+                    <div className="bg-green-50 border-2 border-green-200 rounded-xl p-6">
+                      <div className="flex items-center justify-between mb-3">
+                        <Trophy className="text-green-500" size={32} />
+                      </div>
+                      <p className="text-green-600 text-sm font-medium mb-1">Premiação (90%)</p>
+                      <p className="text-3xl font-bold text-green-900">R$ {financialSummary.prizePool.toFixed(2)}</p>
+                    </div>
+
+                    <div className="bg-purple-50 border-2 border-purple-200 rounded-xl p-6">
+                      <div className="flex items-center justify-between mb-3">
+                        <Award className="text-purple-500" size={32} />
+                      </div>
+                      <p className="text-purple-600 text-sm font-medium mb-1">Taxa Admin (10%)</p>
+                      <p className="text-3xl font-bold text-purple-900">R$ {financialSummary.adminFee.toFixed(2)}</p>
+                    </div>
+
+                    <div className="bg-red-50 border-2 border-red-200 rounded-xl p-6">
+                      <div className="flex items-center justify-between mb-3">
+                        <AlertCircle className="text-red-500" size={32} />
+                      </div>
+                      <p className="text-red-600 text-sm font-medium mb-1">Pendente</p>
+                      <p className="text-3xl font-bold text-red-900">R$ {financialSummary.totalPending.toFixed(2)}</p>
+                    </div>
+                  </div>
+
+                  {/* Vencedores / Premiação */}
+                  <div className="bg-gradient-to-br from-yellow-400 via-yellow-500 to-orange-500 rounded-xl p-8 text-white">
+                    <div className="flex items-center gap-3 mb-6">
+                      <Trophy size={48} />
+                      <div>
+                        <h3 className="text-3xl font-bold">Premiação</h3>
+                        <p className="text-yellow-100">Classificação Atual</p>
+                      </div>
+                    </div>
+
+                    {winners.length === 0 ? (
+                      <div className="bg-white bg-opacity-20 rounded-xl p-8 text-center">
+                        <p className="text-xl font-semibold">Nenhuma rodada finalizada ainda</p>
+                        <p className="text-yellow-100 mt-2">A premiação será calculada após as finalizações</p>
+                      </div>
+                    ) : (
+                      <div className="space-y-4">
+                        <div className="bg-white bg-opacity-20 rounded-xl p-6">
+                          <div className="text-center mb-4">
+                            <p className="text-yellow-100 text-sm font-medium">PRÊMIO {winners.length > 1 ? 'DIVIDIDO' : 'TOTAL'}</p>
+                            <p className="text-5xl font-bold mt-2">R$ {prizePerWinner.toFixed(2)}</p>
+                            <p className="text-yellow-100 text-sm mt-1">por vencedor</p>
+                          </div>
+                        </div>
+
+                        <div className="bg-white bg-opacity-20 rounded-xl p-6">
+                          <h4 className="text-xl font-bold mb-4 flex items-center gap-2">
+                            <Award size={24} />
+                            {winners.length > 1 ? `${winners.length} Vencedores (Empate)` : '🏆 Campeão Atual'}
+                          </h4>
+                          <div className="space-y-3">
+                            {winners.map((winner, index) => (
+                              <div key={winner.user.id} className="bg-white rounded-lg p-4 text-gray-900 flex justify-between items-center">
+                                <div>
+                                  <p className="font-bold text-lg">{winner.user.name}</p>
+                                  <p className="text-sm text-gray-600">{winner.user.whatsapp}</p>
+                                </div>
+                                <div className="text-right">
+                                  <p className="text-2xl font-bold text-green-600">{winner.points} pts</p>
+                                  <p className="text-sm font-medium text-green-700">R$ {prizePerWinner.toFixed(2)}</p>
+                                </div>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+
+                        {winners.length > 1 && (
+                          <div className="bg-white bg-opacity-20 rounded-xl p-4 text-center">
+                            <p className="text-sm">⚠️ Empate detectado! Premiação dividida igualmente entre os vencedores.</p>
+                          </div>
+                        )}
+                      </div>
+                    )}
+                  </div>
+
+                  {/* Estatísticas Gerais */}
+                  <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                    <div className="bg-white rounded-xl shadow-sm border p-6">
+                      <p className="text-gray-600 text-sm font-medium mb-2">Total de Rodadas</p>
+                      <p className="text-3xl font-bold text-gray-900">{rounds.length}</p>
+                      <div className="mt-3 space-y-1 text-sm">
+                        <p className="text-gray-600">🔜 Futuras: {rounds.filter(r => r.status === 'upcoming').length}</p>
+                        <p className="text-green-600">✅ Abertas: {rounds.filter(r => r.status === 'open').length}</p>
+                        <p className="text-yellow-600">🔒 Fechadas: {rounds.filter(r => r.status === 'closed').length}</p>
+                        <p className="text-purple-600">🏁 Finalizadas: {rounds.filter(r => r.status === 'finished').length}</p>
+                      </div>
+                    </div>
+
+                    <div className="bg-white rounded-xl shadow-sm border p-6">
+                      <p className="text-gray-600 text-sm font-medium mb-2">Participantes</p>
+                      <p className="text-3xl font-bold text-gray-900">{users.filter(u => !u.isAdmin).length}</p>
+                      <p className="text-sm text-gray-500 mt-3">Jogadores ativos no bolão</p>
+                    </div>
+
+                    <div className="bg-white rounded-xl shadow-sm border p-6">
+                      <p className="text-gray-600 text-sm font-medium mb-2">Total de Palpites</p>
+                      <p className="text-3xl font-bold text-gray-900">{predictions.length}</p>
+                      <p className="text-sm text-gray-500 mt-3">Palpites registrados</p>
+                    </div>
+                  </div>
+                </div>
+              );
+            })()}
+          </div>
+        )}
+
+        {activeTab === 'settings' && (
+          <div>
+            <h2 className="text-2xl font-bold mb-6">Configurações</h2>
+            
+            <div className="bg-white rounded-xl shadow-sm border p-6 max-w-3xl">
+              <h3 className="text-lg font-bold mb-4">Mensagem do WhatsApp</h3>
+              <p className="text-gray-600 text-sm mb-4">
+                Personalize a mensagem enviada quando um usuário confirma seus palpites. Use as variáveis:
+              </p>
+              <div className="bg-blue-50 border border-blue-200 rounded-lg p-4 mb-4">
+                <p className="text-sm font-mono"><strong>{'{RODADA}'}</strong> - Nome da rodada</p>
+                <p className="text-sm font-mono"><strong>{'{PALPITES}'}</strong> - Lista de palpites do usuário</p>
+              </div>
+
+              <textarea
+                value={whatsappMessage}
+                onChange={(e) => setWhatsappMessage(e.target.value)}
+                className="w-full px-4 py-3 border rounded-lg font-mono text-sm"
+                rows="10"
+                placeholder="Digite a mensagem..."
+              />
+
+              <div className="flex justify-end gap-3 mt-4">
+                <button
+                  onClick={() => setWhatsappMessage(settings?.whatsappMessage || '')}
+                  className="px-6 py-2 border rounded-lg"
+                >
+                  Cancelar
+                </button>
+                <button
+                  onClick={handleSaveWhatsAppMessage}
+                  className="px-6 py-2 bg-green-600 text-white rounded-lg"
+                >
+                  Salvar Mensagem
+                </button>
+              </div>
+
+              <div className="mt-6 p-4 bg-gray-50 rounded-lg">
+                <h4 className="font-semibold mb-2">Prévia:</h4>
+                <div className="bg-white p-4 rounded border text-sm whitespace-pre-wrap font-mono">
+                  {whatsappMessage
+                    .replace('{RODADA}', 'Rodada 1')
+                    .replace('{PALPITES}', '1. Palmeiras 2 x 1 Flamengo\n2. Corinthians 1 x 1 Santos')}
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
         {activeTab === 'rounds' && (
           <div>
             <div className="flex justify-between mb-6">
@@ -1069,6 +1354,11 @@ const UserPanel = ({ setView }) => {
     const round = rounds.find(r => r.id === roundId);
     if (!round || round.status !== 'finished') return null;
     
+    // Verificar se pagou
+    const userRoundPreds = predictions.filter(p => p.userId === currentUser.id && p.roundId === roundId);
+    const isPaid = userRoundPreds.length > 0 && userRoundPreds[0]?.paid;
+    if (!isPaid) return 0; // Se não pagou, retorna 0 pontos
+    
     let points = 0;
     round.matches?.forEach(match => {
       const pred = predictions.find(p => 
@@ -1326,19 +1616,43 @@ const UserPanel = ({ setView }) => {
               const userPred = predictions.find(p => p.userId === currentUser.id && p.roundId === round.id && p.matchId === match.id);
               return (
                 <div key={match.id} className="bg-gray-50 p-4 rounded-lg">
-                  <div className="grid grid-cols-12 gap-3 items-center">
-                    <div className="col-span-4 flex items-center gap-2">
-                      <img src={homeTeam?.logo} alt="" className="w-8 h-8" />
-                      <span className="font-medium text-sm">{homeTeam?.name}</span>
+                  <div className="flex flex-col gap-3">
+                    {/* Times e Logos */}
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-2 flex-1">
+                        <img src={homeTeam?.logo} alt="" className="w-8 h-8 flex-shrink-0" />
+                        <span className="font-medium text-sm truncate">{homeTeam?.name}</span>
+                      </div>
+                      <span className="text-gray-400 font-bold px-2">VS</span>
+                      <div className="flex items-center gap-2 flex-1 justify-end">
+                        <span className="font-medium text-sm truncate">{awayTeam?.name}</span>
+                        <img src={awayTeam?.logo} alt="" className="w-8 h-8 flex-shrink-0" />
+                      </div>
                     </div>
-                    <div className="col-span-4 flex items-center justify-center gap-2">
-                      <input type="number" min="0" max="20" defaultValue={userPred?.homeScore} onChange={(e) => setLocalPreds({ ...localPreds, [match.id]: { ...localPreds[match.id], home: e.target.value } })} disabled={isFinalized} className={`w-16 px-2 py-2 border rounded text-center font-bold ${isFinalized ? 'bg-gray-200' : ''}`} placeholder="0" />
+                    
+                    {/* Inputs de Palpite */}
+                    <div className="flex items-center justify-center gap-3">
+                      <input 
+                        type="number" 
+                        min="0" 
+                        max="20" 
+                        defaultValue={userPred?.homeScore} 
+                        onChange={(e) => setLocalPreds({ ...localPreds, [match.id]: { ...localPreds[match.id], home: e.target.value } })} 
+                        disabled={isFinalized} 
+                        className={`w-16 px-2 py-2 border rounded text-center font-bold ${isFinalized ? 'bg-gray-200' : ''}`} 
+                        placeholder="0" 
+                      />
                       <span className="font-bold text-gray-400">X</span>
-                      <input type="number" min="0" max="20" defaultValue={userPred?.awayScore} onChange={(e) => setLocalPreds({ ...localPreds, [match.id]: { ...localPreds[match.id], away: e.target.value } })} disabled={isFinalized} className={`w-16 px-2 py-2 border rounded text-center font-bold ${isFinalized ? 'bg-gray-200' : ''}`} placeholder="0" />
-                    </div>
-                    <div className="col-span-4 flex items-center gap-2 justify-end">
-                      <span className="font-medium text-sm">{awayTeam?.name}</span>
-                      <img src={awayTeam?.logo} alt="" className="w-8 h-8" />
+                      <input 
+                        type="number" 
+                        min="0" 
+                        max="20" 
+                        defaultValue={userPred?.awayScore} 
+                        onChange={(e) => setLocalPreds({ ...localPreds, [match.id]: { ...localPreds[match.id], away: e.target.value } })} 
+                        disabled={isFinalized} 
+                        className={`w-16 px-2 py-2 border rounded text-center font-bold ${isFinalized ? 'bg-gray-200' : ''}`} 
+                        placeholder="0" 
+                      />
                     </div>
                   </div>
                 </div>
@@ -1410,8 +1724,8 @@ const UserPanel = ({ setView }) => {
           </div>
         </div>
         <div className="p-6 border-t flex gap-3">
-          <button onClick={onCancel} className="flex-1 px-6 py-3 border-2 rounded-lg">Revisar</button>
-          <button onClick={onConfirm} className="flex-1 px-6 py-3 bg-gradient-to-r from-green-600 to-green-700 text-white rounded-lg font-bold">Confirmar</button>
+          <button onClick={onCancel} className="flex-1 px-6 py-3 border-2 rounded-lg font-semibold hover:bg-gray-50">Revisar Palpites</button>
+          <button onClick={onConfirm} className="flex-1 px-6 py-3 bg-gradient-to-r from-green-600 to-green-700 text-white rounded-lg font-bold hover:from-green-700 hover:to-green-800">Confirmar Definitivo</button>
         </div>
       </div>
     </div>
@@ -1430,11 +1744,17 @@ const UserPanel = ({ setView }) => {
           finalized: true
         });
       }
-      sendWhatsAppMessage(currentUser.whatsapp, pendingPredictions.round.name, pendingPredictions.predictions, teams);
+      sendWhatsAppMessage(
+        currentUser.whatsapp, 
+        pendingPredictions.round.name, 
+        pendingPredictions.predictions, 
+        teams,
+        settings?.whatsappMessage
+      );
       setShowConfirmModal(false);
       setPendingPredictions(null);
       setSelectedRound(null);
-      alert('✅ Palpites confirmados! Verifique seu WhatsApp.');
+      alert('✅ Palpites confirmados! Verifique seu WhatsApp.\n\n⚠️ IMPORTANTE: Os pontos só serão computados após a confirmação do pagamento pelo administrador.');
     } catch (error) {
       alert('Erro: ' + error.message);
     }
@@ -1451,6 +1771,11 @@ const UserPanel = ({ setView }) => {
   const calculateUserRoundPoints = (userId, roundId) => {
     const round = rounds.find(r => r.id === roundId);
     if (!round || round.status !== 'finished') return 0;
+    
+    // Verificar se pagou
+    const userRoundPreds = predictions.filter(p => p.userId === userId && p.roundId === roundId);
+    const isPaid = userRoundPreds.length > 0 && userRoundPreds[0]?.paid;
+    if (!isPaid) return 0; // Se não pagou, retorna 0 pontos
     
     let points = 0;
     round.matches?.forEach(match => {
@@ -1570,6 +1895,9 @@ const UserPanel = ({ setView }) => {
               <div className="grid gap-4">
                 {openRounds.map((round) => {
                   const isFinalized = isRoundFinalized(round.id);
+                  const userRoundPreds = predictions.filter(p => p.userId === currentUser.id && p.roundId === round.id);
+                  const isPaid = userRoundPreds.length > 0 && userRoundPreds[0]?.paid;
+                  
                   return (
                     <div key={round.id} className="bg-white rounded-xl shadow-sm border p-6">
                       <div className="flex justify-between items-center">
@@ -1577,6 +1905,11 @@ const UserPanel = ({ setView }) => {
                           <div className="flex items-center gap-3">
                             <h3 className="text-xl font-bold">{round.name}</h3>
                             {isFinalized && <span className="bg-green-100 text-green-700 px-3 py-1 rounded-full text-xs">✅ Finalizado</span>}
+                            {isFinalized && (
+                              <span className={`px-3 py-1 rounded-full text-xs font-medium ${isPaid ? 'bg-green-600 text-white' : 'bg-orange-100 text-orange-700'}`}>
+                                {isPaid ? '💰 Pago' : '⚠️ Pendente'}
+                              </span>
+                            )}
                           </div>
                           <p className="text-gray-600 mt-1">{round.matches?.length || 0} jogos • R$ 15,00</p>
                         </div>
