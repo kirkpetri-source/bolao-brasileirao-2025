@@ -1,5 +1,5 @@
 import React, { useState, useEffect, createContext, useContext } from 'react';
-import { Trophy, Users, Calendar, TrendingUp, LogOut, Eye, EyeOff, Plus, Edit2, Trash2, Upload, ExternalLink, X, UserPlus, Target, Award, ChevronDown, ChevronUp, Check, Key } from 'lucide-react';
+import { Trophy, Users, Calendar, TrendingUp, LogOut, Eye, EyeOff, Plus, Edit2, Trash2, Upload, ExternalLink, X, UserPlus, Target, Award, ChevronDown, ChevronUp, Check, Key, DollarSign, CheckCircle, XCircle, AlertCircle } from 'lucide-react';
 import { initializeApp } from 'firebase/app';
 import { getFirestore, collection, addDoc, updateDoc, deleteDoc, doc, getDocs, onSnapshot, serverTimestamp } from 'firebase/firestore';
 
@@ -152,7 +152,8 @@ const AppProvider = ({ children }) => {
     addRound: async (d) => { const r = await addDoc(collection(db, 'rounds'), { ...d, createdAt: serverTimestamp() }); return { id: r.id, ...d }; },
     updateRound: async (id, d) => await updateDoc(doc(db, 'rounds', id), d),
     deleteRound: async (id) => await deleteDoc(doc(db, 'rounds', id)),
-    addPrediction: async (d) => { const r = await addDoc(collection(db, 'predictions'), { ...d, createdAt: serverTimestamp() }); return { id: r.id, ...d }; }
+    addPrediction: async (d) => { const r = await addDoc(collection(db, 'predictions'), { ...d, paid: false, createdAt: serverTimestamp() }); return { id: r.id, ...d }; },
+    updatePrediction: async (id, d) => await updateDoc(doc(db, 'predictions', id), d)
   };
 
   return <AppContext.Provider value={value}>{children}</AppContext.Provider>;
@@ -496,13 +497,15 @@ const PasswordModal = ({ user, onSave, onCancel }) => {
 };
 
 const AdminPanel = ({ setView }) => {
-  const { currentUser, setCurrentUser, teams, rounds, users, predictions, addRound, updateRound, deleteRound, addTeam, updateTeam, deleteTeam, updateUser, deleteUser, resetTeamsToSerieA2025 } = useApp();
+  const { currentUser, setCurrentUser, teams, rounds, users, predictions, addRound, updateRound, deleteRound, addTeam, updateTeam, deleteTeam, updateUser, deleteUser, resetTeamsToSerieA2025, updatePrediction } = useApp();
   const [activeTab, setActiveTab] = useState('rounds');
   const [editingRound, setEditingRound] = useState(null);
   const [editingTeam, setEditingTeam] = useState(null);
   const [showRoundForm, setShowRoundForm] = useState(false);
   const [showTeamForm, setShowTeamForm] = useState(false);
   const [editingPassword, setEditingPassword] = useState(null);
+  const [selectedFinanceRound, setSelectedFinanceRound] = useState(null);
+  const [paymentFilter, setPaymentFilter] = useState('all'); // all, paid, pending
 
   const handleDeleteUser = async (user) => {
     if (!confirm(`⚠️ ATENÇÃO!\n\nDeseja realmente excluir o usuário "${user.name}"?\n\nIsso também excluirá todos os palpites deste usuário!\n\nEsta ação não pode ser desfeita.`)) {
@@ -520,6 +523,54 @@ const AdminPanel = ({ setView }) => {
     } catch (error) {
       alert('❌ Erro ao excluir usuário: ' + error.message);
     }
+  };
+
+  const togglePaymentStatus = async (userId, roundId) => {
+    try {
+      // Encontrar a primeira predição do usuário nesta rodada
+      const userRoundPrediction = predictions.find(p => p.userId === userId && p.roundId === roundId);
+      
+      if (userRoundPrediction) {
+        const newPaidStatus = !userRoundPrediction.paid;
+        
+        // Atualizar TODAS as predições do usuário nesta rodada
+        const allUserRoundPredictions = predictions.filter(p => p.userId === userId && p.roundId === roundId);
+        for (const pred of allUserRoundPredictions) {
+          await updatePrediction(pred.id, { paid: newPaidStatus });
+        }
+      }
+    } catch (error) {
+      alert('Erro ao atualizar pagamento: ' + error.message);
+    }
+  };
+
+  const getPaymentStatus = (userId, roundId) => {
+    const userRoundPrediction = predictions.find(p => p.userId === userId && p.roundId === roundId);
+    return userRoundPrediction?.paid || false;
+  };
+
+  const getRoundParticipants = (roundId) => {
+    const participantIds = [...new Set(predictions.filter(p => p.roundId === roundId).map(p => p.userId))];
+    return users.filter(u => !u.isAdmin && participantIds.includes(u.id));
+  };
+
+  const getRoundFinancialSummary = (roundId) => {
+    const participants = getRoundParticipants(roundId);
+    const totalParticipants = participants.length;
+    const paidCount = participants.filter(u => getPaymentStatus(u.id, roundId)).length;
+    const pendingCount = totalParticipants - paidCount;
+    const totalExpected = totalParticipants * 15;
+    const totalReceived = paidCount * 15;
+    const totalPending = pendingCount * 15;
+
+    return {
+      totalParticipants,
+      paidCount,
+      pendingCount,
+      totalExpected,
+      totalReceived,
+      totalPending
+    };
   };
 
   const handleResetTeams = async () => {
@@ -656,11 +707,12 @@ const AdminPanel = ({ setView }) => {
       <div className="bg-white border-b">
         <div className="max-w-7xl mx-auto px-4">
           <div className="flex gap-6">
-            {['rounds', 'teams', 'participants'].map(tab => (
+            {['rounds', 'teams', 'participants', 'financial'].map(tab => (
               <button key={tab} onClick={() => setActiveTab(tab)} className={`py-4 px-2 border-b-2 font-medium ${activeTab === tab ? 'border-green-600 text-green-600' : 'border-transparent text-gray-500'}`}>
                 {tab === 'rounds' && <><Calendar className="inline mr-2" size={18} />Rodadas</>}
                 {tab === 'teams' && <><Users className="inline mr-2" size={18} />Times</>}
                 {tab === 'participants' && <><TrendingUp className="inline mr-2" size={18} />Participantes</>}
+                {tab === 'financial' && <><DollarSign className="inline mr-2" size={18} />Financeiro</>}
               </button>
             ))}
           </div>
@@ -772,6 +824,209 @@ const AdminPanel = ({ setView }) => {
             </div>
           </div>
         )}
+
+        {activeTab === 'financial' && (
+          <div>
+            <div className="flex justify-between items-start mb-6">
+              <div>
+                <h2 className="text-2xl font-bold">Controle Financeiro</h2>
+                <p className="text-gray-600 mt-1">Gerencie os pagamentos por rodada (R$ 15,00 cada)</p>
+              </div>
+              <div className="w-64">
+                <label className="block text-sm font-medium mb-2">Selecione a Rodada</label>
+                <select
+                  value={selectedFinanceRound || ''}
+                  onChange={(e) => setSelectedFinanceRound(e.target.value)}
+                  className="w-full px-4 py-2 border rounded-lg bg-white"
+                >
+                  <option value="">Todas as rodadas</option>
+                  {rounds.filter(r => r.status !== 'upcoming').sort((a, b) => b.number - a.number).map(round => (
+                    <option key={round.id} value={round.id}>
+                      {round.name}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            </div>
+
+            {selectedFinanceRound ? (
+              (() => {
+                const round = rounds.find(r => r.id === selectedFinanceRound);
+                const participants = getRoundParticipants(selectedFinanceRound);
+                const summary = getRoundFinancialSummary(selectedFinanceRound);
+                
+                const filteredParticipants = participants.filter(user => {
+                  if (paymentFilter === 'paid') return getPaymentStatus(user.id, selectedFinanceRound);
+                  if (paymentFilter === 'pending') return !getPaymentStatus(user.id, selectedFinanceRound);
+                  return true;
+                });
+
+                return (
+                  <div className="space-y-6">
+                    {/* Resumo Financeiro */}
+                    <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+                      <div className="bg-blue-50 border-2 border-blue-200 rounded-xl p-4">
+                        <div className="flex items-center justify-between">
+                          <div>
+                            <p className="text-blue-600 text-sm font-medium">Total Esperado</p>
+                            <p className="text-2xl font-bold text-blue-900">R$ {summary.totalExpected.toFixed(2)}</p>
+                            <p className="text-xs text-blue-600 mt-1">{summary.totalParticipants} participantes</p>
+                          </div>
+                          <Users className="text-blue-400" size={32} />
+                        </div>
+                      </div>
+
+                      <div className="bg-green-50 border-2 border-green-200 rounded-xl p-4">
+                        <div className="flex items-center justify-between">
+                          <div>
+                            <p className="text-green-600 text-sm font-medium">Recebido</p>
+                            <p className="text-2xl font-bold text-green-900">R$ {summary.totalReceived.toFixed(2)}</p>
+                            <p className="text-xs text-green-600 mt-1">{summary.paidCount} pagamentos</p>
+                          </div>
+                          <CheckCircle className="text-green-400" size={32} />
+                        </div>
+                      </div>
+
+                      <div className="bg-red-50 border-2 border-red-200 rounded-xl p-4">
+                        <div className="flex items-center justify-between">
+                          <div>
+                            <p className="text-red-600 text-sm font-medium">Pendente</p>
+                            <p className="text-2xl font-bold text-red-900">R$ {summary.totalPending.toFixed(2)}</p>
+                            <p className="text-xs text-red-600 mt-1">{summary.pendingCount} devendo</p>
+                          </div>
+                          <AlertCircle className="text-red-400" size={32} />
+                        </div>
+                      </div>
+
+                      <div className="bg-purple-50 border-2 border-purple-200 rounded-xl p-4">
+                        <div className="flex items-center justify-between">
+                          <div>
+                            <p className="text-purple-600 text-sm font-medium">Taxa de Pagamento</p>
+                            <p className="text-2xl font-bold text-purple-900">
+                              {summary.totalParticipants > 0 ? Math.round((summary.paidCount / summary.totalParticipants) * 100) : 0}%
+                            </p>
+                            <p className="text-xs text-purple-600 mt-1">
+                              {summary.paidCount}/{summary.totalParticipants}
+                            </p>
+                          </div>
+                          <Trophy className="text-purple-400" size={32} />
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Filtros */}
+                    <div className="bg-white rounded-xl shadow-sm border p-4">
+                      <div className="flex items-center gap-3">
+                        <span className="text-sm font-medium text-gray-700">Filtrar:</span>
+                        <button
+                          onClick={() => setPaymentFilter('all')}
+                          className={`px-4 py-2 rounded-lg text-sm font-medium transition ${
+                            paymentFilter === 'all' ? 'bg-gray-800 text-white' : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
+                          }`}
+                        >
+                          Todos ({summary.totalParticipants})
+                        </button>
+                        <button
+                          onClick={() => setPaymentFilter('paid')}
+                          className={`px-4 py-2 rounded-lg text-sm font-medium transition ${
+                            paymentFilter === 'paid' ? 'bg-green-600 text-white' : 'bg-green-100 text-green-700 hover:bg-green-200'
+                          }`}
+                        >
+                          Pagos ({summary.paidCount})
+                        </button>
+                        <button
+                          onClick={() => setPaymentFilter('pending')}
+                          className={`px-4 py-2 rounded-lg text-sm font-medium transition ${
+                            paymentFilter === 'pending' ? 'bg-red-600 text-white' : 'bg-red-100 text-red-700 hover:bg-red-200'
+                          }`}
+                        >
+                          Pendentes ({summary.pendingCount})
+                        </button>
+                      </div>
+                    </div>
+
+                    {/* Lista de Participantes */}
+                    <div className="bg-white rounded-xl shadow-sm border overflow-hidden">
+                      <div className="bg-gradient-to-r from-green-600 to-green-700 text-white p-4">
+                        <h3 className="font-bold text-lg">{round?.name}</h3>
+                      </div>
+                      
+                      {filteredParticipants.length === 0 ? (
+                        <div className="p-12 text-center">
+                          <Users className="mx-auto text-gray-400 mb-4" size={48} />
+                          <h3 className="text-xl font-semibold mb-2">
+                            {paymentFilter === 'paid' && 'Nenhum pagamento confirmado'}
+                            {paymentFilter === 'pending' && 'Todos os pagamentos confirmados! 🎉'}
+                            {paymentFilter === 'all' && 'Nenhum participante nesta rodada'}
+                          </h3>
+                        </div>
+                      ) : (
+                        <table className="w-full">
+                          <thead className="bg-gray-50 border-b">
+                            <tr>
+                              <th className="px-6 py-4 text-left text-xs font-medium text-gray-500 uppercase">Participante</th>
+                              <th className="px-6 py-4 text-center text-xs font-medium text-gray-500 uppercase">WhatsApp</th>
+                              <th className="px-6 py-4 text-center text-xs font-medium text-gray-500 uppercase">Valor</th>
+                              <th className="px-6 py-4 text-center text-xs font-medium text-gray-500 uppercase">Status</th>
+                              <th className="px-6 py-4 text-center text-xs font-medium text-gray-500 uppercase">Ação</th>
+                            </tr>
+                          </thead>
+                          <tbody className="divide-y">
+                            {filteredParticipants.map(user => {
+                              const isPaid = getPaymentStatus(user.id, selectedFinanceRound);
+                              return (
+                                <tr key={user.id} className={isPaid ? 'bg-green-50' : ''}>
+                                  <td className="px-6 py-4">
+                                    <span className="font-medium">{user.name}</span>
+                                  </td>
+                                  <td className="px-6 py-4 text-center text-sm text-gray-600">
+                                    {user.whatsapp}
+                                  </td>
+                                  <td className="px-6 py-4 text-center">
+                                    <span className="text-lg font-bold text-gray-900">R$ 15,00</span>
+                                  </td>
+                                  <td className="px-6 py-4 text-center">
+                                    {isPaid ? (
+                                      <span className="inline-flex items-center gap-1 bg-green-100 text-green-700 px-3 py-1 rounded-full text-sm font-medium">
+                                        <CheckCircle size={16} /> Pago
+                                      </span>
+                                    ) : (
+                                      <span className="inline-flex items-center gap-1 bg-red-100 text-red-700 px-3 py-1 rounded-full text-sm font-medium">
+                                        <XCircle size={16} /> Pendente
+                                      </span>
+                                    )}
+                                  </td>
+                                  <td className="px-6 py-4 text-center">
+                                    <button
+                                      onClick={() => togglePaymentStatus(user.id, selectedFinanceRound)}
+                                      className={`px-4 py-2 rounded-lg font-medium transition ${
+                                        isPaid
+                                          ? 'bg-red-100 text-red-700 hover:bg-red-200'
+                                          : 'bg-green-600 text-white hover:bg-green-700'
+                                      }`}
+                                    >
+                                      {isPaid ? 'Marcar Pendente' : 'Marcar Pago'}
+                                    </button>
+                                  </td>
+                                </tr>
+                              );
+                            })}
+                          </tbody>
+                        </table>
+                      )}
+                    </div>
+                  </div>
+                );
+              })()
+            ) : (
+              <div className="bg-white rounded-xl p-12 text-center border-2 border-dashed">
+                <DollarSign className="mx-auto text-gray-400 mb-4" size={48} />
+                <h3 className="text-xl font-semibold mb-2">Selecione uma rodada</h3>
+                <p className="text-gray-500">Escolha uma rodada acima para visualizar os pagamentos</p>
+              </div>
+            )}
+          </div>
+        )}
       </div>
 
       {showRoundForm && <RoundForm round={editingRound} teams={teams} rounds={rounds} onSave={saveRound} onCancel={() => { setEditingRound(null); setShowRoundForm(false); }} />}
@@ -845,6 +1100,7 @@ const UserPanel = ({ setView }) => {
     const userPreds = getRoundPredictions(round.id);
     const hasPredictions = userPreds.length > 0;
     const points = calculateRoundPoints(round.id);
+    const isPaid = userPreds.length > 0 && userPreds[0]?.paid;
     
     const getStatusInfo = () => {
       switch (round.status) {
@@ -879,6 +1135,11 @@ const UserPanel = ({ setView }) => {
                 <span className={`px-3 py-1 rounded-full text-xs font-medium ${status.color}`}>
                   {status.icon} {status.text}
                 </span>
+                {hasPredictions && (
+                  <span className={`px-3 py-1 rounded-full text-xs font-medium ${isPaid ? 'bg-green-600 text-white' : 'bg-orange-100 text-orange-700'}`}>
+                    {isPaid ? '💰 Pago' : '⚠️ Pagamento Pendente'}
+                  </span>
+                )}
                 {round.status === 'finished' && points !== null && (
                   <span className="bg-green-600 text-white px-3 py-1 rounded-full text-xs font-bold">
                     {points} pontos
