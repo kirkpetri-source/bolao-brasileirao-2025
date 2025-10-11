@@ -676,7 +676,17 @@ const AdminPanel = ({ setView }) => {
         {activeTab === 'teams' && (
           <div>
             <div className="flex justify-between mb-6">
-              <h2 className="text-2xl font-bold">Gerenciar Times</h2>
+              <div>
+                <h2 className="text-2xl font-bold">Gerenciar Times</h2>
+                <div className="flex items-center gap-3 mt-2">
+                  <span className={`px-3 py-1 rounded-full text-sm font-medium ${teams.length === 20 ? 'bg-green-100 text-green-700' : 'bg-orange-100 text-orange-700'}`}>
+                    {teams.length} times cadastrados
+                  </span>
+                  {teams.length !== 20 && (
+                    <span className="text-sm text-orange-600">⚠️ Deve ter exatamente 20 times</span>
+                  )}
+                </div>
+              </div>
               <div className="flex gap-3">
                 <button onClick={handleResetTeams} className="flex items-center gap-2 bg-orange-600 text-white px-6 py-3 rounded-lg hover:bg-orange-700">
                   <Trophy size={20} /> Resetar para Série A 2025
@@ -751,8 +761,236 @@ const UserPanel = ({ setView }) => {
   const [selectedRound, setSelectedRound] = useState(null);
   const [showConfirmModal, setShowConfirmModal] = useState(false);
   const [pendingPredictions, setPendingPredictions] = useState(null);
+  const [expandedRounds, setExpandedRounds] = useState({});
+
+  const toggleRound = (roundId) => {
+    setExpandedRounds(prev => ({ ...prev, [roundId]: !prev[roundId] }));
+  };
 
   const openRounds = rounds.filter(r => r.status === 'open');
+  const closedRounds = rounds.filter(r => r.status === 'closed').sort((a, b) => b.number - a.number);
+  const finishedRounds = rounds.filter(r => r.status === 'finished').sort((a, b) => b.number - a.number);
+  const upcomingRounds = rounds.filter(r => r.status === 'upcoming').sort((a, b) => a.number - b.number);
+
+  const getRoundPredictions = (roundId) => {
+    return predictions.filter(p => p.userId === currentUser.id && p.roundId === roundId);
+  };
+
+  const calculateRoundPoints = (roundId) => {
+    const round = rounds.find(r => r.id === roundId);
+    if (!round || round.status !== 'finished') return null;
+    
+    let points = 0;
+    round.matches?.forEach(match => {
+      const pred = predictions.find(p => 
+        p.userId === currentUser.id && 
+        p.roundId === roundId && 
+        p.matchId === match.id
+      );
+      
+      if (pred && match.finished && match.homeScore !== null && match.awayScore !== null) {
+        // Placar exato: 3 pontos
+        if (pred.homeScore === match.homeScore && pred.awayScore === match.awayScore) {
+          points += 3;
+        }
+        // Acertou o vencedor ou empate: 1 ponto
+        else {
+          const predResult = pred.homeScore > pred.awayScore ? 'home' : pred.homeScore < pred.awayScore ? 'away' : 'draw';
+          const matchResult = match.homeScore > match.awayScore ? 'home' : match.homeScore < match.awayScore ? 'away' : 'draw';
+          if (predResult === matchResult) {
+            points += 1;
+          }
+        }
+      }
+    });
+    return points;
+  };
+
+  const RoundAccordion = ({ round }) => {
+    const isExpanded = expandedRounds[round.id];
+    const userPreds = getRoundPredictions(round.id);
+    const hasPredictions = userPreds.length > 0;
+    const points = calculateRoundPoints(round.id);
+    
+    const getStatusInfo = () => {
+      switch (round.status) {
+        case 'upcoming':
+          return { text: 'Futura', color: 'bg-gray-100 text-gray-700', icon: '🔜' };
+        case 'open':
+          return { text: hasPredictions ? 'Palpites Feitos' : 'Aberta', color: hasPredictions ? 'bg-blue-100 text-blue-700' : 'bg-green-100 text-green-700', icon: hasPredictions ? '✅' : '⏰' };
+        case 'closed':
+          return { text: 'Aguardando', color: 'bg-yellow-100 text-yellow-700', icon: '🔒' };
+        case 'finished':
+          return { text: 'Finalizada', color: 'bg-purple-100 text-purple-700', icon: '🏁' };
+        default:
+          return { text: 'Status', color: 'bg-gray-100 text-gray-700', icon: '❓' };
+      }
+    };
+
+    const status = getStatusInfo();
+
+    return (
+      <div className="bg-white rounded-xl shadow-sm border overflow-hidden">
+        <button
+          onClick={() => toggleRound(round.id)}
+          className="w-full p-6 flex items-center justify-between hover:bg-gray-50 transition"
+        >
+          <div className="flex items-center gap-4">
+            <div className={`w-12 h-12 rounded-full flex items-center justify-center font-bold text-xl ${status.color}`}>
+              {round.number}
+            </div>
+            <div className="text-left">
+              <h3 className="text-lg font-bold">{round.name}</h3>
+              <div className="flex items-center gap-3 mt-1">
+                <span className={`px-3 py-1 rounded-full text-xs font-medium ${status.color}`}>
+                  {status.icon} {status.text}
+                </span>
+                {round.status === 'finished' && points !== null && (
+                  <span className="bg-green-600 text-white px-3 py-1 rounded-full text-xs font-bold">
+                    {points} pontos
+                  </span>
+                )}
+                {round.status === 'open' && !hasPredictions && (
+                  <span className="bg-red-100 text-red-700 px-3 py-1 rounded-full text-xs font-medium">
+                    Sem palpites
+                  </span>
+                )}
+              </div>
+            </div>
+          </div>
+          <div className="flex items-center gap-3">
+            <span className="text-sm text-gray-500">{round.matches?.length || 0} jogos</span>
+            {isExpanded ? <ChevronUp size={24} /> : <ChevronDown size={24} />}
+          </div>
+        </button>
+
+        {isExpanded && (
+          <div className="border-t bg-gray-50 p-6">
+            {round.status === 'upcoming' && (
+              <div className="text-center py-8">
+                <Calendar className="mx-auto text-gray-400 mb-3" size={48} />
+                <p className="text-gray-600 font-medium">Esta rodada ainda não foi aberta para palpites</p>
+              </div>
+            )}
+
+            {round.status === 'open' && !hasPredictions && (
+              <div className="text-center py-8">
+                <Target className="mx-auto text-orange-500 mb-3" size={48} />
+                <p className="text-gray-800 font-bold mb-2">Você ainda não fez seus palpites!</p>
+                <button
+                  onClick={() => setSelectedRound(round)}
+                  className="mt-4 bg-green-600 text-white px-6 py-2 rounded-lg font-semibold"
+                >
+                  Fazer Palpites Agora
+                </button>
+              </div>
+            )}
+
+            {((round.status === 'open' && hasPredictions) || round.status === 'closed' || round.status === 'finished') && (
+              <div className="space-y-3">
+                {round.matches?.map((match) => {
+                  const homeTeam = teams.find(t => t.id === match.homeTeamId);
+                  const awayTeam = teams.find(t => t.id === match.awayTeamId);
+                  const pred = predictions.find(p => 
+                    p.userId === currentUser.id && 
+                    p.roundId === round.id && 
+                    p.matchId === match.id
+                  );
+
+                  let matchPoints = null;
+                  if (round.status === 'finished' && match.finished && pred) {
+                    if (pred.homeScore === match.homeScore && pred.awayScore === match.awayScore) {
+                      matchPoints = 3;
+                    } else {
+                      const predResult = pred.homeScore > pred.awayScore ? 'home' : pred.homeScore < pred.awayScore ? 'away' : 'draw';
+                      const matchResult = match.homeScore > match.awayScore ? 'home' : match.homeScore < match.awayScore ? 'away' : 'draw';
+                      if (predResult === matchResult) {
+                        matchPoints = 1;
+                      } else {
+                        matchPoints = 0;
+                      }
+                    }
+                  }
+
+                  return (
+                    <div key={match.id} className="bg-white rounded-lg p-4 border">
+                      <div className="grid grid-cols-12 gap-3 items-center">
+                        {/* Time Casa */}
+                        <div className="col-span-4 flex items-center gap-2">
+                          <img src={homeTeam?.logo} alt="" className="w-8 h-8 object-contain" />
+                          <span className="font-medium text-sm">{homeTeam?.name}</span>
+                        </div>
+
+                        {/* Resultado */}
+                        <div className="col-span-4">
+                          {/* Palpite */}
+                          {pred && (
+                            <div className="flex items-center justify-center gap-2 mb-2">
+                              <span className="text-xs text-gray-500">Palpite:</span>
+                              <div className="flex items-center gap-2">
+                                <span className="bg-blue-100 text-blue-700 px-3 py-1 rounded font-bold">{pred.homeScore}</span>
+                                <span className="text-gray-400 font-bold">X</span>
+                                <span className="bg-blue-100 text-blue-700 px-3 py-1 rounded font-bold">{pred.awayScore}</span>
+                              </div>
+                            </div>
+                          )}
+                          
+                          {/* Resultado Real */}
+                          {match.finished && match.homeScore !== null && (
+                            <div className="flex items-center justify-center gap-2">
+                              <span className="text-xs text-gray-500">Real:</span>
+                              <div className="flex items-center gap-2">
+                                <span className="bg-green-600 text-white px-3 py-1 rounded font-bold">{match.homeScore}</span>
+                                <span className="text-gray-400 font-bold">X</span>
+                                <span className="bg-green-600 text-white px-3 py-1 rounded font-bold">{match.awayScore}</span>
+                              </div>
+                            </div>
+                          )}
+
+                          {!pred && round.status !== 'upcoming' && (
+                            <div className="text-center">
+                              <span className="text-xs text-red-600">Sem palpite</span>
+                            </div>
+                          )}
+                        </div>
+
+                        {/* Time Fora */}
+                        <div className="col-span-4 flex items-center gap-2 justify-end">
+                          <span className="font-medium text-sm">{awayTeam?.name}</span>
+                          <img src={awayTeam?.logo} alt="" className="w-8 h-8 object-contain" />
+                        </div>
+                      </div>
+
+                      {/* Pontuação do jogo */}
+                      {matchPoints !== null && (
+                        <div className="mt-3 pt-3 border-t flex justify-center">
+                          {matchPoints === 3 && (
+                            <span className="bg-green-600 text-white px-4 py-1 rounded-full text-sm font-bold flex items-center gap-2">
+                              <Check size={16} /> Placar Exato: +3 pontos
+                            </span>
+                          )}
+                          {matchPoints === 1 && (
+                            <span className="bg-blue-600 text-white px-4 py-1 rounded-full text-sm font-bold flex items-center gap-2">
+                              <Check size={16} /> Acertou: +1 ponto
+                            </span>
+                          )}
+                          {matchPoints === 0 && (
+                            <span className="bg-red-100 text-red-700 px-4 py-1 rounded-full text-sm font-bold flex items-center gap-2">
+                              <X size={16} /> Errou: 0 pontos
+                            </span>
+                          )}
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+        )}
+      </div>
+    );
+  };
 
   const isRoundFinalized = (roundId) => {
     const round = rounds.find(r => r.id === roundId);
@@ -908,11 +1146,45 @@ const UserPanel = ({ setView }) => {
   };
 
   const userPredictions = predictions.filter(p => p.userId === currentUser.id);
-  const ranking = users.filter(u => !u.isAdmin).map(user => ({
-    user,
-    totalPoints: 0,
-    totalPredictions: predictions.filter(p => p.userId === user.id).length
-  })).sort((a, b) => b.totalPoints - a.totalPoints);
+  
+  // Calcula pontos totais do usuário
+  const totalPoints = rounds
+    .filter(r => r.status === 'finished')
+    .reduce((sum, round) => sum + (calculateRoundPoints(round.id) || 0), 0);
+  
+  const ranking = users.filter(u => !u.isAdmin).map(user => {
+    const userPoints = rounds
+      .filter(r => r.status === 'finished')
+      .reduce((sum, round) => {
+        let points = 0;
+        round.matches?.forEach(match => {
+          const pred = predictions.find(p => 
+            p.userId === user.id && 
+            p.roundId === round.id && 
+            p.matchId === match.id
+          );
+          
+          if (pred && match.finished && match.homeScore !== null && match.awayScore !== null) {
+            if (pred.homeScore === match.homeScore && pred.awayScore === match.awayScore) {
+              points += 3;
+            } else {
+              const predResult = pred.homeScore > pred.awayScore ? 'home' : pred.homeScore < pred.awayScore ? 'away' : 'draw';
+              const matchResult = match.homeScore > match.awayScore ? 'home' : match.homeScore < match.awayScore ? 'away' : 'draw';
+              if (predResult === matchResult) {
+                points += 1;
+              }
+            }
+          }
+        });
+        return sum + points;
+      }, 0);
+    
+    return {
+      user,
+      totalPoints: userPoints,
+      totalPredictions: predictions.filter(p => p.userId === user.id).length
+    };
+  }).sort((a, b) => b.totalPoints - a.totalPoints);
 
   return (
     <div className="min-h-screen bg-gray-50">
@@ -933,7 +1205,7 @@ const UserPanel = ({ setView }) => {
                 <Trophy className="text-yellow-300" size={24} />
                 <div>
                   <p className="text-green-100 text-sm">Pontos</p>
-                  <p className="text-2xl font-bold">0</p>
+                  <p className="text-2xl font-bold">{totalPoints}</p>
                 </div>
               </div>
             </div>
@@ -966,7 +1238,7 @@ const UserPanel = ({ setView }) => {
               <button key={tab} onClick={() => setActiveTab(tab)} className={`py-4 px-2 border-b-2 font-medium ${activeTab === tab ? 'border-green-600 text-green-600' : 'border-transparent text-gray-500'}`}>
                 {tab === 'predictions' && <><Target className="inline mr-2" size={18} />Palpites</>}
                 {tab === 'ranking' && <><TrendingUp className="inline mr-2" size={18} />Ranking</>}
-                {tab === 'history' && <><Calendar className="inline mr-2" size={18} />Histórico</>}
+                {tab === 'history' && <><Calendar className="inline mr-2" size={18} />Minhas Rodadas</>}
               </button>
             ))}
           </div>
@@ -1049,11 +1321,78 @@ const UserPanel = ({ setView }) => {
 
         {activeTab === 'history' && (
           <div>
-            <h2 className="text-2xl font-bold mb-6">Meu Histórico</h2>
-            <div className="bg-white rounded-xl p-12 text-center border-2 border-dashed">
-              <Calendar className="mx-auto text-gray-400 mb-4" size={48} />
-              <h3 className="text-xl font-semibold mb-2">Nenhum palpite ainda</h3>
-            </div>
+            <h2 className="text-2xl font-bold mb-2">Todas as Rodadas</h2>
+            <p className="text-gray-600 mb-6">Acompanhe seus palpites, resultados e pontuação</p>
+            
+            {rounds.length === 0 ? (
+              <div className="bg-white rounded-xl p-12 text-center border-2 border-dashed">
+                <Calendar className="mx-auto text-gray-400 mb-4" size={48} />
+                <h3 className="text-xl font-semibold mb-2">Nenhuma rodada criada</h3>
+                <p className="text-gray-500">Aguarde o administrador criar as rodadas</p>
+              </div>
+            ) : (
+              <div className="space-y-8">
+                {/* Rodadas Abertas */}
+                {openRounds.length > 0 && (
+                  <div>
+                    <h3 className="text-lg font-semibold mb-3 flex items-center gap-2">
+                      <span className="bg-green-100 text-green-700 px-3 py-1 rounded-full text-sm">
+                        {openRounds.length}
+                      </span>
+                      Rodadas Abertas para Palpites
+                    </h3>
+                    <div className="space-y-3">
+                      {openRounds.map(round => <RoundAccordion key={round.id} round={round} />)}
+                    </div>
+                  </div>
+                )}
+
+                {/* Rodadas Fechadas */}
+                {closedRounds.length > 0 && (
+                  <div>
+                    <h3 className="text-lg font-semibold mb-3 flex items-center gap-2">
+                      <span className="bg-yellow-100 text-yellow-700 px-3 py-1 rounded-full text-sm">
+                        {closedRounds.length}
+                      </span>
+                      Rodadas Aguardando Resultados
+                    </h3>
+                    <div className="space-y-3">
+                      {closedRounds.map(round => <RoundAccordion key={round.id} round={round} />)}
+                    </div>
+                  </div>
+                )}
+
+                {/* Rodadas Finalizadas */}
+                {finishedRounds.length > 0 && (
+                  <div>
+                    <h3 className="text-lg font-semibold mb-3 flex items-center gap-2">
+                      <span className="bg-purple-100 text-purple-700 px-3 py-1 rounded-full text-sm">
+                        {finishedRounds.length}
+                      </span>
+                      Rodadas Finalizadas
+                    </h3>
+                    <div className="space-y-3">
+                      {finishedRounds.map(round => <RoundAccordion key={round.id} round={round} />)}
+                    </div>
+                  </div>
+                )}
+
+                {/* Rodadas Futuras */}
+                {upcomingRounds.length > 0 && (
+                  <div>
+                    <h3 className="text-lg font-semibold mb-3 flex items-center gap-2">
+                      <span className="bg-gray-100 text-gray-700 px-3 py-1 rounded-full text-sm">
+                        {upcomingRounds.length}
+                      </span>
+                      Próximas Rodadas
+                    </h3>
+                    <div className="space-y-3">
+                      {upcomingRounds.map(round => <RoundAccordion key={round.id} round={round} />)}
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
           </div>
         )}
       </div>
