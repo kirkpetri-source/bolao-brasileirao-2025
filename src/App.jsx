@@ -1,5 +1,5 @@
 import React, { useState, useEffect, createContext, useContext } from 'react';
-import { Trophy, Users, Calendar, TrendingUp, LogOut, Eye, EyeOff, Plus, Edit2, Trash2, Upload, ExternalLink, X, UserPlus, Target, Award, ChevronDown, ChevronUp, Check } from 'lucide-react';
+import { Trophy, Users, Calendar, TrendingUp, LogOut, Eye, EyeOff, Plus, Edit2, Trash2, Upload, ExternalLink, X, UserPlus, Target, Award, ChevronDown, ChevronUp, Check, Key } from 'lucide-react';
 import { initializeApp } from 'firebase/app';
 import { getFirestore, collection, addDoc, updateDoc, deleteDoc, doc, getDocs, onSnapshot, serverTimestamp } from 'firebase/firestore';
 
@@ -18,25 +18,26 @@ const db = getFirestore(app);
 const AppContext = createContext();
 const useApp = () => useContext(AppContext);
 
+// TIMES CORRETOS DA SÉRIE A 2025 (FONTE: CBF)
 const INITIAL_TEAMS = [
-  { name: 'Athletico-PR', logo: 'https://logodetimes.com/times/athletico-paranaense/logo-athletico-paranaense-256.png' },
-  { name: 'Atlético-GO', logo: 'https://logodetimes.com/times/atletico-goianiense/logo-atletico-goianiense-256.png' },
   { name: 'Atlético-MG', logo: 'https://logodetimes.com/times/atletico-mineiro/logo-atletico-mineiro-256.png' },
   { name: 'Bahia', logo: 'https://logodetimes.com/times/bahia/logo-bahia-256.png' },
   { name: 'Botafogo', logo: 'https://logodetimes.com/times/botafogo/logo-botafogo-256.png' },
+  { name: 'Ceará', logo: 'https://logodetimes.com/times/ceara/logo-ceara-256.png' },
   { name: 'Corinthians', logo: 'https://logodetimes.com/times/corinthians/logo-corinthians-256.png' },
-  { name: 'Criciúma', logo: 'https://logodetimes.com/times/criciuma/logo-criciuma-256.png' },
   { name: 'Cruzeiro', logo: 'https://logodetimes.com/times/cruzeiro/logo-cruzeiro-256.png' },
-  { name: 'Cuiabá', logo: 'https://logodetimes.com/times/cuiaba/logo-cuiaba-256.png' },
   { name: 'Flamengo', logo: 'https://logodetimes.com/times/flamengo/logo-flamengo-256.png' },
   { name: 'Fluminense', logo: 'https://logodetimes.com/times/fluminense/logo-fluminense-256.png' },
   { name: 'Fortaleza', logo: 'https://logodetimes.com/times/fortaleza/logo-fortaleza-256.png' },
   { name: 'Grêmio', logo: 'https://logodetimes.com/times/gremio/logo-gremio-256.png' },
   { name: 'Internacional', logo: 'https://logodetimes.com/times/internacional/logo-internacional-256.png' },
   { name: 'Juventude', logo: 'https://logodetimes.com/times/juventude/logo-juventude-256.png' },
+  { name: 'Mirassol', logo: 'https://logodetimes.com/times/mirassol/logo-mirassol-256.png' },
   { name: 'Palmeiras', logo: 'https://logodetimes.com/times/palmeiras/logo-palmeiras-256.png' },
   { name: 'RB Bragantino', logo: 'https://logodetimes.com/times/bragantino/logo-bragantino-256.png' },
+  { name: 'Santos', logo: 'https://logodetimes.com/times/santos/logo-santos-256.png' },
   { name: 'São Paulo', logo: 'https://logodetimes.com/times/sao-paulo/logo-sao-paulo-256.png' },
+  { name: 'Sport', logo: 'https://logodetimes.com/times/sport/logo-sport-256.png' },
   { name: 'Vasco', logo: 'https://logodetimes.com/times/vasco/logo-vasco-256.png' },
   { name: 'Vitória', logo: 'https://logodetimes.com/times/vitoria/logo-vitoria-256.png' }
 ];
@@ -128,6 +129,7 @@ const AppProvider = ({ children }) => {
   const value = {
     currentUser, setCurrentUser, users, teams, rounds, predictions, loading,
     addUser: async (d) => { const r = await addDoc(collection(db, 'users'), { ...d, createdAt: serverTimestamp() }); return { id: r.id, ...d }; },
+    updateUser: async (id, d) => await updateDoc(doc(db, 'users', id), d),
     addTeam: async (d) => { const r = await addDoc(collection(db, 'teams'), { ...d, createdAt: serverTimestamp() }); return { id: r.id, ...d }; },
     updateTeam: async (id, d) => await updateDoc(doc(db, 'teams', id), d),
     deleteTeam: async (id) => await deleteDoc(doc(db, 'teams', id)),
@@ -174,30 +176,6 @@ const LoginScreen = ({ setView }) => {
       setError('');
     } catch (e) {
       setError('Erro: ' + e.message);
-    }
-  };
-
-  const handleForgotPassword = () => {
-    const phone = prompt('Digite seu WhatsApp (apenas admin):');
-    if (phone === '11999999999') {
-      const newPassword = prompt('Digite a nova senha (mínimo 6 caracteres):');
-      if (newPassword && newPassword.length >= 6) {
-        const confirmPassword = prompt('Confirme a nova senha:');
-        if (newPassword === confirmPassword) {
-          const adminUser = users.find(u => u.whatsapp === '11999999999');
-          if (adminUser) {
-            updateDoc(doc(db, 'users', adminUser.id), { password: newPassword })
-              .then(() => alert('✅ Senha alterada com sucesso!'))
-              .catch(() => alert('❌ Erro ao alterar senha'));
-          }
-        } else {
-          alert('As senhas não coincidem!');
-        }
-      } else {
-        alert('Senha deve ter no mínimo 6 caracteres!');
-      }
-    } else {
-      alert('Apenas o administrador pode redefinir senha!');
     }
   };
 
@@ -261,9 +239,6 @@ const LoginScreen = ({ setView }) => {
             </div>
           </div>
           <button onClick={handleLogin} className="w-full bg-green-600 text-white py-3 rounded-lg font-semibold">Entrar</button>
-          <button onClick={handleForgotPassword} className="w-full text-green-600 py-2 text-sm font-medium hover:underline">
-            Esqueci minha senha (apenas admin)
-          </button>
           <button onClick={() => { setShowRegister(true); setError(''); }} className="w-full border-2 border-green-600 text-green-600 py-3 rounded-lg font-semibold flex items-center justify-center gap-2">
             <UserPlus size={20} /> Criar Conta
           </button>
@@ -430,13 +405,88 @@ const RoundForm = ({ round, teams, rounds, onSave, onCancel }) => {
   );
 };
 
+const PasswordModal = ({ user, onSave, onCancel }) => {
+  const [newPassword, setNewPassword] = useState('');
+  const [confirmPassword, setConfirmPassword] = useState('');
+  const [showPassword, setShowPassword] = useState(false);
+  const [error, setError] = useState('');
+
+  const handleSave = () => {
+    if (!newPassword || newPassword.length < 6) {
+      setError('Senha deve ter no mínimo 6 caracteres!');
+      return;
+    }
+    if (newPassword !== confirmPassword) {
+      setError('Senhas não coincidem!');
+      return;
+    }
+    onSave(newPassword);
+  };
+
+  return (
+    <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
+      <div className="bg-white rounded-xl max-w-md w-full">
+        <div className="p-6 border-b flex justify-between items-center">
+          <div className="flex items-center gap-3">
+            <Key className="text-green-600" size={24} />
+            <h3 className="text-2xl font-bold">Redefinir Senha</h3>
+          </div>
+          <button onClick={onCancel}><X size={24} /></button>
+        </div>
+        <div className="p-6 space-y-4">
+          <div className="bg-blue-50 border border-blue-200 rounded-lg p-3">
+            <p className="text-sm text-blue-800">
+              <strong>Usuário:</strong> {user.name}<br />
+              <strong>WhatsApp:</strong> {user.whatsapp}
+            </p>
+          </div>
+          {error && <div className="bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded-lg">{error}</div>}
+          <div>
+            <label className="block text-sm font-medium mb-2">Nova Senha</label>
+            <div className="relative">
+              <input 
+                type={showPassword ? 'text' : 'password'} 
+                value={newPassword} 
+                onChange={(e) => setNewPassword(e.target.value)} 
+                className="w-full px-4 py-2 border rounded-lg" 
+                placeholder="Mínimo 6 caracteres" 
+              />
+              <button 
+                onClick={() => setShowPassword(!showPassword)} 
+                className="absolute right-3 top-1/2 transform -translate-y-1/2"
+              >
+                {showPassword ? <EyeOff size={20} /> : <Eye size={20} />}
+              </button>
+            </div>
+          </div>
+          <div>
+            <label className="block text-sm font-medium mb-2">Confirmar Senha</label>
+            <input 
+              type={showPassword ? 'text' : 'password'} 
+              value={confirmPassword} 
+              onChange={(e) => setConfirmPassword(e.target.value)} 
+              className="w-full px-4 py-2 border rounded-lg" 
+              placeholder="Digite novamente" 
+            />
+          </div>
+        </div>
+        <div className="p-6 border-t flex gap-3">
+          <button onClick={onCancel} className="flex-1 px-6 py-2 border rounded-lg">Cancelar</button>
+          <button onClick={handleSave} className="flex-1 px-6 py-2 bg-green-600 text-white rounded-lg">Alterar Senha</button>
+        </div>
+      </div>
+    </div>
+  );
+};
+
 const AdminPanel = ({ setView }) => {
-  const { currentUser, setCurrentUser, teams, rounds, users, predictions, addRound, updateRound, deleteRound, addTeam, updateTeam, deleteTeam } = useApp();
+  const { currentUser, setCurrentUser, teams, rounds, users, predictions, addRound, updateRound, deleteRound, addTeam, updateTeam, deleteTeam, updateUser } = useApp();
   const [activeTab, setActiveTab] = useState('rounds');
   const [editingRound, setEditingRound] = useState(null);
   const [editingTeam, setEditingTeam] = useState(null);
   const [showRoundForm, setShowRoundForm] = useState(false);
   const [showTeamForm, setShowTeamForm] = useState(false);
+  const [editingPassword, setEditingPassword] = useState(null);
 
   const saveRound = async (roundData) => {
     try {
@@ -463,6 +513,16 @@ const AdminPanel = ({ setView }) => {
       setShowTeamForm(false);
     } catch (error) {
       alert('Erro: ' + error.message);
+    }
+  };
+
+  const savePassword = async (newPassword) => {
+    try {
+      await updateUser(editingPassword.id, { password: newPassword });
+      alert('✅ Senha alterada com sucesso!');
+      setEditingPassword(null);
+    } catch (error) {
+      alert('❌ Erro ao alterar senha: ' + error.message);
     }
   };
 
@@ -619,14 +679,23 @@ const AdminPanel = ({ setView }) => {
                 const userPreds = predictions.filter(p => p.userId === user.id);
                 return (
                   <div key={user.id} className="bg-white rounded-xl shadow-sm border p-6">
-                    <div className="flex justify-between">
+                    <div className="flex justify-between items-center">
                       <div>
                         <h3 className="text-lg font-bold">{user.name}</h3>
                         <p className="text-gray-600 text-sm">{user.whatsapp}</p>
                       </div>
-                      <div className="text-right">
-                        <div className="text-2xl font-bold text-green-600">0 pts</div>
-                        <p className="text-gray-600 text-sm">{userPreds.length} palpites</p>
+                      <div className="flex items-center gap-4">
+                        <div className="text-right">
+                          <div className="text-2xl font-bold text-green-600">0 pts</div>
+                          <p className="text-gray-600 text-sm">{userPreds.length} palpites</p>
+                        </div>
+                        <button 
+                          onClick={() => setEditingPassword(user)} 
+                          className="flex items-center gap-2 bg-orange-100 text-orange-700 px-4 py-2 rounded-lg hover:bg-orange-200 transition"
+                        >
+                          <Key size={18} />
+                          <span className="hidden sm:inline">Senha</span>
+                        </button>
                       </div>
                     </div>
                   </div>
@@ -639,6 +708,7 @@ const AdminPanel = ({ setView }) => {
 
       {showRoundForm && <RoundForm round={editingRound} teams={teams} rounds={rounds} onSave={saveRound} onCancel={() => { setEditingRound(null); setShowRoundForm(false); }} />}
       {showTeamForm && <TeamForm team={editingTeam} onSave={saveTeam} onCancel={() => { setEditingTeam(null); setShowTeamForm(false); }} />}
+      {editingPassword && <PasswordModal user={editingPassword} onSave={savePassword} onCancel={() => setEditingPassword(null)} />}
     </div>
   );
 };
