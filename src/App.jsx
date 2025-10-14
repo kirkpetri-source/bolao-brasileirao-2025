@@ -1494,12 +1494,26 @@ const AdminPanel = ({ setView }) => {
                           {dashboardData.ranking.map((item, index) => {
                             const isWinner = dashboardData.winners.some(w => w.user.id === item.user.id && w.cartelaCode === item.cartelaCode);
                             const est = establishments.find(e => e.id === item.establishmentId);
+                            
+                            // Calcular posição considerando empates
+                            let position = 1;
+                            let uniqueScores = [];
+                            
+                            // Coletar pontuações únicas maiores que a pontuação atual
+                            for (let i = 0; i < dashboardData.ranking.length; i++) {
+                              if (dashboardData.ranking[i].points > item.points && !uniqueScores.includes(dashboardData.ranking[i].points)) {
+                                uniqueScores.push(dashboardData.ranking[i].points);
+                              }
+                            }
+                            
+                            // A posição é o número de pontuações únicas maiores + 1
+                            position = uniqueScores.length + 1;
+                            
                             return (
                               <tr key={`${item.user.id}-${item.cartelaCode}`} className={isWinner ? 'bg-yellow-50' : ''}>
                                 <td className="px-4 py-3">
                                   <div className="flex items-center gap-2">
-                                    {index === 0 && <Trophy className="text-yellow-500" size={16} />}
-                                    <span className="font-bold">{index + 1}º</span>
+                                    <span className="font-bold">{position}º</span>
                                   </div>
                                 </td>
                                 <td className="px-4 py-3">
@@ -2786,35 +2800,7 @@ const UserPanel = ({ setView }) => {
               <LogOut size={18} /> Sair
             </button>
           </div>
-          <div className="grid grid-cols-3 gap-4 mt-6">
-            <div className="bg-white bg-opacity-20 backdrop-blur rounded-lg p-4">
-              <div className="flex items-center gap-3">
-                <Trophy className="text-yellow-300" size={24} />
-                <div>
-                  <p className="text-green-100 text-sm">Pontos</p>
-                  <p className="text-2xl font-bold">{totalPoints}</p>
-                </div>
-              </div>
-            </div>
-            <div className="bg-white bg-opacity-20 backdrop-blur rounded-lg p-4">
-              <div className="flex items-center gap-3">
-                <Target className="text-blue-300" size={24} />
-                <div>
-                  <p className="text-green-100 text-sm">Palpites</p>
-                  <p className="text-2xl font-bold">{userPredictions.length}</p>
-                </div>
-              </div>
-            </div>
-            <div className="bg-white bg-opacity-20 backdrop-blur rounded-lg p-4">
-              <div className="flex items-center gap-3">
-                <Award className="text-purple-300" size={24} />
-                <div>
-                  <p className="text-green-100 text-sm">Posição</p>
-                  <p className="text-2xl font-bold">{ranking.findIndex(r => r.user.id === currentUser.id) + 1 || '-'}º</p>
-                </div>
-              </div>
-            </div>
-          </div>
+          
         </div>
       </div>
 
@@ -3028,16 +3014,27 @@ const UserPanel = ({ setView }) => {
                     <tbody className="divide-y">
                       {ranking.map((item, index) => {
                         const isWinner = roundPrize && roundPrize.winners.some(w => w.user.id === item.user.id && w.cartelaCode === item.cartelaCode);
-                        const position = isWinner && roundPrize.winners.length > 1 ? 1 : index + 1;
+                        
+                        // Calcular posição considerando empates
+                        let position = 1;
+                        let uniqueScores = [];
+                        
+                        // Coletar pontuações únicas maiores que a pontuação atual
+                        for (let i = 0; i < ranking.length; i++) {
+                          if (ranking[i].points > item.points && !uniqueScores.includes(ranking[i].points)) {
+                            uniqueScores.push(ranking[i].points);
+                          }
+                        }
+                        
+                        // A posição é o número de pontuações únicas maiores + 1
+                        position = uniqueScores.length + 1;
+                        
                         const est = establishments.find(e => e.id === item.establishmentId);
                         
                         return (
                           <tr key={`${item.user.id}-${item.cartelaCode}`} className={`${item.user.id === currentUser.id ? 'bg-green-50' : ''} ${isWinner ? 'bg-yellow-50' : ''}`}>
                             <td className="px-6 py-4">
                               <div className="flex items-center gap-2">
-                                {position === 1 && <Trophy className="text-yellow-500" size={20} />}
-                                {position === 2 && !isWinner && <Trophy className="text-gray-400" size={20} />}
-                                {position === 3 && !isWinner && <Trophy className="text-orange-600" size={20} />}
                                 <span className="text-lg font-bold">{position}º</span>
                               </div>
                             </td>
@@ -3048,7 +3045,7 @@ const UserPanel = ({ setView }) => {
                                   <span className="ml-2 bg-green-600 text-white text-xs px-2 py-1 rounded-full">Você</span>
                                 )}
                                 {isWinner && (
-                                  <span className="ml-2 bg-yellow-500 text-white text-xs px-2 py-1 rounded-full">🏆 Vencedor</span>
+                                  <span className="ml-2 bg-yellow-500 text-white text-xs px-2 py-1 rounded-full">Vencedor</span>
                                 )}
                                 <p className="text-xs text-blue-600 font-mono mt-1">🎫 {item.cartelaCode}</p>
                                 {est && (
