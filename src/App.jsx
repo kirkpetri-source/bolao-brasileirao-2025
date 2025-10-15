@@ -1,4 +1,4 @@
-import React, { useState, useEffect, createContext, useContext } from 'react';
+import React, { useState, useEffect, useRef, createContext, useContext } from 'react';
 import { Trophy, Users, Calendar, TrendingUp, LogOut, Eye, EyeOff, Plus, Edit2, Trash2, Upload, ExternalLink, X, UserPlus, Target, Award, ChevronDown, ChevronUp, Check, Key, DollarSign, CheckCircle, XCircle, AlertCircle, FileText, Download, Store, Filter } from 'lucide-react';
 import { initializeApp } from 'firebase/app';
 import { getFirestore, collection, addDoc, updateDoc, deleteDoc, doc, getDocs, onSnapshot, serverTimestamp } from 'firebase/firestore';
@@ -312,6 +312,115 @@ const AppProvider = ({ children }) => {
   return <AppContext.Provider value={value}>{children}</AppContext.Provider>;
 };
 
+// Utilitário simples de Markdown -> HTML (negrito, itálico, listas)
+const markdownToHtml = (md) => {
+  if (!md) return '';
+  const escapeHtml = (s) => s
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;');
+  const lines = md.split('\n');
+  let html = '';
+  let inUl = false;
+  let inOl = false;
+  const inline = (text) =>
+    escapeHtml(text)
+      .replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
+      .replace(/\*(.+?)\*/g, '<em>$1</em>');
+  for (const raw of lines) {
+    const line = raw.trimRight();
+    if (/^\s*-\s+/.test(line)) {
+      if (!inUl) { html += '<ul>'; inUl = true; }
+      html += `<li>${inline(line.replace(/^\s*-\s+/, ''))}</li>`;
+      continue;
+    } else if (inUl) { html += '</ul>'; inUl = false; }
+    if (/^\s*\d+\.\s+/.test(line)) {
+      if (!inOl) { html += '<ol>'; inOl = true; }
+      html += `<li>${inline(line.replace(/^\s*\d+\.\s+/, ''))}</li>`;
+      continue;
+    } else if (inOl) { html += '</ol>'; inOl = false; }
+    html += `<p>${inline(line)}</p>`;
+  }
+  if (inUl) html += '</ul>';
+  if (inOl) html += '</ol>';
+  return html;
+};
+
+// Componente reutilizável: Regras do Bolão
+const RulesCard = () => {
+  const { settings } = useApp();
+  const betValue = settings?.betValue != null ? settings.betValue.toFixed(2) : '15,00';
+
+  const hasCustomRules = settings?.rulesText || settings?.scoringCriteria || settings?.tiebreakRules;
+
+  return (
+    <div className="bg-white rounded-xl shadow-sm border p-6">
+      <div className="flex items-center gap-2 mb-4">
+        <FileText size={20} className="text-green-600" />
+        <h2 className="text-xl font-bold">Regras do Bolão</h2>
+      </div>
+
+      {hasCustomRules ? (
+        <div className="space-y-6">
+          {settings?.rulesText && (
+            <div className="space-y-2">
+              <h3 className="font-semibold text-gray-900">Texto Completo</h3>
+              <div className="text-gray-700 text-sm" dangerouslySetInnerHTML={{ __html: markdownToHtml(settings.rulesText) }} />
+            </div>
+          )}
+          {settings?.scoringCriteria && (
+            <div className="space-y-2">
+              <h3 className="font-semibold text-gray-900">Critérios de Pontuação</h3>
+              <div className="text-gray-700 text-sm" dangerouslySetInnerHTML={{ __html: markdownToHtml(settings.scoringCriteria) }} />
+            </div>
+          )}
+          {settings?.tiebreakRules && (
+            <div className="space-y-2">
+              <h3 className="font-semibold text-gray-900">Regras de Desempate</h3>
+              <div className="text-gray-700 text-sm" dangerouslySetInnerHTML={{ __html: markdownToHtml(settings.tiebreakRules) }} />
+            </div>
+          )}
+          <div className="p-3 bg-blue-50 border border-blue-200 rounded-lg text-sm text-blue-800">
+            Valor por cartela: R$ {betValue}
+          </div>
+        </div>
+      ) : (
+        <div className="grid md:grid-cols-2 gap-6">
+          <div className="space-y-3">
+            <h3 className="font-semibold text-gray-900">Participação</h3>
+            <ul className="list-disc list-inside text-gray-700 space-y-1">
+              <li>Faça seus palpites antes do início das partidas.</li>
+              <li>Valor por cartela: R$ {betValue}.</li>
+              <li>Somente cartelas pagas entram no ranking e na premiação.</li>
+            </ul>
+          </div>
+          <div className="space-y-3">
+            <h3 className="font-semibold text-gray-900">Pontuação</h3>
+            <ul className="list-disc list-inside text-gray-700 space-y-1">
+              <li>Placar exato: 3 pontos.</li>
+              <li>Resultado correto (vitória/empate): 1 ponto.</li>
+            </ul>
+          </div>
+          <div className="space-y-3">
+            <h3 className="font-semibold text-gray-900">Premiação</h3>
+            <ul className="list-disc list-inside text-gray-700 space-y-1">
+              <li>85% do total pago na rodada compõe o prêmio.</li>
+              <li>Dividido igualmente entre os vencedores com maior pontuação.</li>
+            </ul>
+          </div>
+          <div className="space-y-3">
+            <h3 className="font-semibold text-gray-900">Desempate</h3>
+            <ul className="list-disc list-inside text-gray-700 space-y-1">
+              <li>Posição igual para empates em pontos.</li>
+              <li>Premiação dividida igualmente entre empatados no topo.</li>
+            </ul>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+};
+
 const LoginScreen = ({ setView }) => {
   const { users, login, addUser } = useApp();
   const [whatsapp, setWhatsapp] = useState('');
@@ -320,6 +429,7 @@ const LoginScreen = ({ setView }) => {
   const [error, setError] = useState('');
   const [showRegister, setShowRegister] = useState(false);
   const [reg, setReg] = useState({ name: '', whatsapp: '', password: '', confirmPassword: '' });
+  const [showRulesModal, setShowRulesModal] = useState(false);
 
   const handleLogin = () => {
     const user = users.find(u => u.whatsapp === whatsapp && u.password === password);
@@ -352,32 +462,56 @@ const LoginScreen = ({ setView }) => {
   if (showRegister) {
     return (
       <div className="min-h-screen bg-gradient-to-br from-green-600 via-green-700 to-green-900 flex items-center justify-center p-4">
-        <div className="bg-white rounded-2xl shadow-2xl p-8 w-full max-w-md">
-          <div className="flex justify-between items-center mb-6">
-            <h2 className="text-2xl font-bold">Criar Conta</h2>
-            <button onClick={() => setShowRegister(false)}><X size={24} /></button>
+        <div className="w-full">
+          <div className="bg-white rounded-2xl shadow-2xl p-8 w-full max-w-md mx-auto">
+            <div className="flex justify-between items-center mb-6">
+              <h2 className="text-2xl font-bold">Criar Conta</h2>
+              <button onClick={() => setShowRegister(false)}><X size={24} /></button>
+            </div>
+            {error && <div className="bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded-lg mb-4">{error}</div>}
+            <div className="space-y-4">
+              <div>
+                <label className="block text-sm font-medium mb-2">Nome</label>
+                <input type="text" placeholder="Seu nome" value={reg.name} onChange={(e) => setReg({ ...reg, name: e.target.value })} className="w-full px-4 py-3 border rounded-lg" />
+              </div>
+              <div>
+                <label className="block text-sm font-medium mb-2">WhatsApp</label>
+                <input type="tel" placeholder="11999999999" value={reg.whatsapp} onChange={(e) => setReg({ ...reg, whatsapp: e.target.value.replace(/\D/g, '') })} className="w-full px-4 py-3 border rounded-lg" />
+              </div>
+              <div>
+                <label className="block text-sm font-medium mb-2">Senha</label>
+                <input type="password" placeholder="Mínimo 6" value={reg.password} onChange={(e) => setReg({ ...reg, password: e.target.value })} className="w-full px-4 py-3 border rounded-lg" />
+              </div>
+              <div>
+                <label className="block text-sm font-medium mb-2">Confirmar</label>
+                <input type="password" placeholder="Digite novamente" value={reg.confirmPassword} onChange={(e) => setReg({ ...reg, confirmPassword: e.target.value })} className="w-full px-4 py-3 border rounded-lg" />
+              </div>
+              <button onClick={handleRegister} className="w-full bg-green-600 text-white py-3 rounded-lg font-semibold">Criar</button>
+              <button onClick={() => { setShowRegister(false); setError(''); }} className="w-full border-2 text-gray-700 py-3 rounded-lg font-semibold">Já tenho</button>
+              <button onClick={() => setShowRulesModal(true)} className="w-full bg-green-50 text-green-700 border-2 border-green-600 py-3 rounded-lg font-semibold flex items-center justify-center gap-2 hover:bg-green-100 focus:outline-none focus:ring-2 focus:ring-green-500 shadow-sm">
+                <FileText size={20} /> Ver Regras
+              </button>
+            </div>
           </div>
-          {error && <div className="bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded-lg mb-4">{error}</div>}
-          <div className="space-y-4">
-            <div>
-              <label className="block text-sm font-medium mb-2">Nome</label>
-              <input type="text" placeholder="Seu nome" value={reg.name} onChange={(e) => setReg({ ...reg, name: e.target.value })} className="w-full px-4 py-3 border rounded-lg" />
+          {showRulesModal && (
+            <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
+              <div className="bg-white rounded-xl max-w-3xl w-full">
+                <div className="p-6 border-b flex justify-between items-center">
+                  <div className="flex items-center gap-3">
+                    <FileText className="text-green-600" size={24} />
+                    <h3 className="text-2xl font-bold">Regras do Bolão</h3>
+                  </div>
+                  <button onClick={() => setShowRulesModal(false)}><X size={24} /></button>
+                </div>
+                <div className="p-6">
+                  <RulesCard />
+                </div>
+              </div>
+
+              
+
             </div>
-            <div>
-              <label className="block text-sm font-medium mb-2">WhatsApp</label>
-              <input type="tel" placeholder="11999999999" value={reg.whatsapp} onChange={(e) => setReg({ ...reg, whatsapp: e.target.value.replace(/\D/g, '') })} className="w-full px-4 py-3 border rounded-lg" />
-            </div>
-            <div>
-              <label className="block text-sm font-medium mb-2">Senha</label>
-              <input type="password" placeholder="Mínimo 6" value={reg.password} onChange={(e) => setReg({ ...reg, password: e.target.value })} className="w-full px-4 py-3 border rounded-lg" />
-            </div>
-            <div>
-              <label className="block text-sm font-medium mb-2">Confirmar</label>
-              <input type="password" placeholder="Digite novamente" value={reg.confirmPassword} onChange={(e) => setReg({ ...reg, confirmPassword: e.target.value })} className="w-full px-4 py-3 border rounded-lg" />
-            </div>
-            <button onClick={handleRegister} className="w-full bg-green-600 text-white py-3 rounded-lg font-semibold">Criar</button>
-            <button onClick={() => { setShowRegister(false); setError(''); }} className="w-full border-2 text-gray-700 py-3 rounded-lg font-semibold">Já tenho</button>
-          </div>
+          )}
         </div>
       </div>
     );
@@ -385,34 +519,56 @@ const LoginScreen = ({ setView }) => {
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-green-600 via-green-700 to-green-900 flex items-center justify-center p-4">
-      <div className="bg-white rounded-2xl shadow-2xl p-8 w-full max-w-md">
-        <div className="text-center mb-8">
-          <div className="bg-green-600 w-20 h-20 rounded-full flex items-center justify-center mx-auto mb-4">
-            <Trophy className="w-12 h-12 text-white" />
+      <div className="w-full">
+        <div className="bg-white rounded-2xl shadow-2xl p-8 w-full max-w-md mx-auto">
+          <div className="text-center mb-8">
+            <div className="bg-green-600 w-20 h-20 rounded-full flex items-center justify-center mx-auto mb-4">
+              <Trophy className="w-12 h-12 text-white" />
+            </div>
+            <h1 className="text-3xl font-bold">Bolão Brasileirão</h1>
+            <p className="text-gray-600 mt-2">2025 - Série A</p>
           </div>
-          <h1 className="text-3xl font-bold">Bolão Brasileirão</h1>
-          <p className="text-gray-600 mt-2">2025 - Série A</p>
+          {error && <div className="bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded-lg mb-4">{error}</div>}
+          <div className="space-y-4">
+            <div>
+              <label className="block text-sm font-medium mb-2">WhatsApp</label>
+              <input type="tel" placeholder="11999999999" value={whatsapp} onChange={(e) => setWhatsapp(e.target.value)} className="w-full px-4 py-3 border rounded-lg" />
+            </div>
+            <div>
+              <label className="block text-sm font-medium mb-2">Senha</label>
+              <div className="relative">
+                <input type={showPassword ? 'text' : 'password'} placeholder="••••••••" value={password} onChange={(e) => setPassword(e.target.value)} onKeyPress={(e) => e.key === 'Enter' && handleLogin()} className="w-full px-4 py-3 border rounded-lg" />
+                <button onClick={() => setShowPassword(!showPassword)} className="absolute right-3 top-1/2 transform -translate-y-1/2">
+                  {showPassword ? <EyeOff size={20} /> : <Eye size={20} />}
+                </button>
+              </div>
+            </div>
+            <button onClick={handleLogin} className="w-full bg-green-600 text-white py-3 rounded-lg font-semibold">Entrar</button>
+            <button onClick={() => { setShowRegister(true); setError(''); }} className="w-full border-2 border-green-600 text-green-600 py-3 rounded-lg font-semibold flex items-center justify-center gap-2">
+              <UserPlus size={20} /> Criar Conta
+            </button>
+            <button onClick={() => setShowRulesModal(true)} className="w-full bg-green-50 text-green-700 border-2 border-green-600 py-3 rounded-lg font-semibold flex items-center justify-center gap-2 hover:bg-green-100 focus:outline-none focus:ring-2 focus:ring-green-500 shadow-sm">
+              <FileText size={20} /> Ver Regras
+            </button>
+          </div>
         </div>
-        {error && <div className="bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded-lg mb-4">{error}</div>}
-        <div className="space-y-4">
-          <div>
-            <label className="block text-sm font-medium mb-2">WhatsApp</label>
-            <input type="tel" placeholder="11999999999" value={whatsapp} onChange={(e) => setWhatsapp(e.target.value)} className="w-full px-4 py-3 border rounded-lg" />
-          </div>
-          <div>
-            <label className="block text-sm font-medium mb-2">Senha</label>
-            <div className="relative">
-              <input type={showPassword ? 'text' : 'password'} placeholder="••••••••" value={password} onChange={(e) => setPassword(e.target.value)} onKeyPress={(e) => e.key === 'Enter' && handleLogin()} className="w-full px-4 py-3 border rounded-lg" />
-              <button onClick={() => setShowPassword(!showPassword)} className="absolute right-3 top-1/2 transform -translate-y-1/2">
-                {showPassword ? <EyeOff size={20} /> : <Eye size={20} />}
-              </button>
+        
+        {showRulesModal && (
+          <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
+            <div className="bg-white rounded-xl max-w-3xl w-full">
+              <div className="p-6 border-b flex justify-between items-center">
+                <div className="flex items-center gap-3">
+                  <FileText className="text-green-600" size={24} />
+                  <h3 className="text-2xl font-bold">Regras do Bolão</h3>
+                </div>
+                <button onClick={() => setShowRulesModal(false)}><X size={24} /></button>
+              </div>
+              <div className="p-6">
+                <RulesCard />
+              </div>
             </div>
           </div>
-          <button onClick={handleLogin} className="w-full bg-green-600 text-white py-3 rounded-lg font-semibold">Entrar</button>
-          <button onClick={() => { setShowRegister(true); setError(''); }} className="w-full border-2 border-green-600 text-green-600 py-3 rounded-lg font-semibold flex items-center justify-center gap-2">
-            <UserPlus size={20} /> Criar Conta
-          </button>
-        </div>
+        )}
       </div>
     </div>
   );
@@ -714,27 +870,108 @@ const AdminPanel = ({ setView }) => {
   const [establishmentFilter, setEstablishmentFilter] = useState('all');
   const [whatsappMessage, setWhatsappMessage] = useState(settings?.whatsappMessage || '');
   const [betValue, setBetValue] = useState(settings?.betValue || 15);
+  // Valores padrão para regras, pontuação e desempate (usados se não houver conteúdo salvo)
+  const initialBet = settings?.betValue != null ? settings.betValue : 15;
+  const initialBetDisplay = Number(initialBet).toFixed(2).replace('.', ',');
+  const DEFAULT_RULES_MD = `**Participação**\n- Faça seus palpites antes do início das partidas.\n- Valor por cartela: R$ ${initialBetDisplay}.\n- Somente cartelas pagas entram no ranking e na premiação.\n\n**Premiação**\n- 85% do total pago na rodada compõe o prêmio.\n- Dividido igualmente entre os vencedores com maior pontuação.`;
+  const DEFAULT_SCORING_MD = `- Placar exato: **3 pontos**.\n- Resultado correto (vitória/empate): *1 ponto*.`;
+  const DEFAULT_TIEBREAK_MD = `- Posição igual para empates em pontos.\n- Premiação dividida igualmente entre empatados no topo.`;
+  const [rulesText, setRulesText] = useState(settings?.rulesText ?? DEFAULT_RULES_MD);
+  const [scoringCriteria, setScoringCriteria] = useState(settings?.scoringCriteria ?? DEFAULT_SCORING_MD);
+  const [tiebreakRules, setTiebreakRules] = useState(settings?.tiebreakRules ?? DEFAULT_TIEBREAK_MD);
   const [expandedAdminRounds, setExpandedAdminRounds] = useState({});
+  const rulesTextareaRef = useRef(null);
+  const saveTimerRef = useRef(null);
+  const initialLoadRef = useRef(true);
 
   const toggleAdminRound = (roundId) => {
     setExpandedAdminRounds(prev => ({ ...prev, [roundId]: !prev[roundId] }));
   };
 
+  // Helpers de formatação (Markdown simples)
+  const wrapSelection = (start, end) => {
+    const ta = rulesTextareaRef.current;
+    if (!ta) return;
+    const ss = ta.selectionStart || 0;
+    const se = ta.selectionEnd || ss;
+    const val = rulesText || '';
+    const selected = val.slice(ss, se);
+    const newVal = val.slice(0, ss) + start + selected + end + val.slice(se);
+    setRulesText(newVal);
+    initialLoadRef.current = false;
+    setTimeout(() => {
+      ta.focus();
+      ta.selectionStart = ss + start.length;
+      ta.selectionEnd = se + start.length;
+    }, 0);
+  };
+
+  const makeList = (ordered) => {
+    const ta = rulesTextareaRef.current;
+    const val = rulesText || '';
+    let ss = 0, se = val.length;
+    if (ta) { ss = ta.selectionStart || 0; se = ta.selectionEnd || ss; }
+    const selected = val.slice(ss, se) || '';
+    const block = selected || val;
+    const lines = block.split('\n');
+    const newBlock = lines.map((l, i) => {
+      const prefix = ordered ? `${i + 1}. ` : '- ';
+      return l ? prefix + l : prefix;
+    }).join('\n');
+    const newVal = val.slice(0, ss) + newBlock + val.slice(se);
+    setRulesText(newVal);
+    initialLoadRef.current = false;
+  };
+
   useEffect(() => {
     console.log('Settings atualizados:', settings);
+    // WhatsApp
     if (settings?.whatsappMessage) {
       console.log('Carregando mensagem WhatsApp:', settings.whatsappMessage);
       setWhatsappMessage(settings.whatsappMessage);
     } else if (settings && !settings.whatsappMessage) {
       console.log('Usando mensagem padrão');
-      // Se não tem mensagem, usar padrão
       setWhatsappMessage('🏆 *BOLÃO BRASILEIRÃO 2025*\n\n📋 *{RODADA}*\n🎫 *Cartela: {CARTELA}*\n✅ Confirmado!\n\n{PALPITES}\n\n💰 R$ 15,00\n⚠️ *Não pode alterar após pagamento*\n\nBoa sorte! 🍀');
     }
+
+    // Bet value
     if (settings?.betValue) {
       console.log('Carregando valor da aposta:', settings.betValue);
       setBetValue(settings.betValue);
     }
+
+    // Prefill regras/scoring/desempate mesmo sem settings (usando valor efetivo)
+    const effectiveBet = settings?.betValue != null ? settings.betValue : (betValue != null ? Number(betValue) : 15);
+    const betDisplay = Number(effectiveBet).toFixed(2).replace('.', ',');
+    const defaultRulesMd = `**Participação**\n- Faça seus palpites antes do início das partidas.\n- Valor por cartela: R$ ${betDisplay}.\n- Somente cartelas pagas entram no ranking e na premiação.\n\n**Premiação**\n- 85% do total pago na rodada compõe o prêmio.\n- Dividido igualmente entre os vencedores com maior pontuação.`;
+    const defaultScoringMd = `- Placar exato: **3 pontos**.\n- Resultado correto (vitória/empate): *1 ponto*.`;
+    const defaultTiebreakMd = `- Posição igual para empates em pontos.\n- Premiação dividida igualmente entre empatados no topo.`;
+
+    if (settings) {
+      setRulesText(settings.rulesText ?? (rulesText || defaultRulesMd));
+      setScoringCriteria(settings.scoringCriteria ?? (scoringCriteria || defaultScoringMd));
+      setTiebreakRules(settings.tiebreakRules ?? (tiebreakRules || defaultTiebreakMd));
+    } else {
+      // Sem settings (ex.: offline/erro Firestore) — preencher somente se estiver vazio
+      if (!rulesText) setRulesText(defaultRulesMd);
+      if (!scoringCriteria) setScoringCriteria(defaultScoringMd);
+      if (!tiebreakRules) setTiebreakRules(defaultTiebreakMd);
+    }
   }, [settings]);
+
+  // Auto-save das regras com debounce
+  useEffect(() => {
+    if (initialLoadRef.current) return; // ignora auto-save do carregamento inicial
+    if (saveTimerRef.current) clearTimeout(saveTimerRef.current);
+    saveTimerRef.current = setTimeout(() => {
+      updateSettings({
+        rulesText,
+        scoringCriteria,
+        tiebreakRules
+      }).catch(err => console.error('Erro ao auto-salvar regras:', err));
+    }, 600);
+    return () => { if (saveTimerRef.current) clearTimeout(saveTimerRef.current); };
+  }, [rulesText, scoringCriteria, tiebreakRules]);
 
   useEffect(() => {
     if (!selectedDashboardRound) {
@@ -906,6 +1143,19 @@ const AdminPanel = ({ setView }) => {
       adminFee,
       establishmentFee
     };
+  };
+
+  const handleSaveRules = async () => {
+    try {
+      await updateSettings({
+        rulesText,
+        scoringCriteria,
+        tiebreakRules
+      });
+      alert('✅ Regras atualizadas com sucesso!');
+    } catch (error) {
+      alert('❌ Erro ao salvar regras: ' + error.message);
+    }
   };
 
   const getRoundDashboardData = (roundId) => {
@@ -1790,6 +2040,74 @@ const AdminPanel = ({ setView }) => {
                   </div>
                 </div>
               </div>
+
+              {/* Regras do Bolão (Editor com formatação e prévia) */}
+              <div className="bg-white rounded-xl shadow-sm border p-6">
+                <h3 className="text-lg font-bold mb-4 flex items-center gap-2">
+                  <FileText size={24} className="text-green-600" />
+                  Regras do Bolão
+                </h3>
+                <p className="text-gray-600 text-sm mb-4">
+                  Edite o texto das regras com formatação básica (negrito, itálico, listas).
+                  As alterações são salvas automaticamente.
+                </p>
+                <div className="space-y-3">
+                  <div className="flex gap-2 flex-wrap">
+                    <button onClick={() => wrapSelection('**','**')} className="px-3 py-2 border rounded-lg text-sm font-semibold">N</button>
+                    <button onClick={() => wrapSelection('*','*')} className="px-3 py-2 border rounded-lg text-sm italic">I</button>
+                    <button onClick={() => makeList(false)} className="px-3 py-2 border rounded-lg text-sm">• Lista</button>
+                    <button onClick={() => makeList(true)} className="px-3 py-2 border rounded-lg text-sm">1. Lista</button>
+                  </div>
+                  <textarea
+                    ref={rulesTextareaRef}
+                    value={rulesText}
+                    onChange={(e) => { initialLoadRef.current = false; setRulesText(e.target.value); }}
+                    className="w-full px-4 py-3 border rounded-lg text-sm"
+                    rows="8"
+                    placeholder="Use **negrito**, *itálico* e crie listas com '-' ou '1.'"
+                  />
+                  <div className="mt-4 p-4 bg-gray-50 rounded-lg">
+                    <h4 className="font-semibold mb-2">Prévia formatada:</h4>
+                    <div className="text-sm text-gray-800">
+                      <div dangerouslySetInnerHTML={{ __html: markdownToHtml(rulesText) }} />
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              {/* Critérios de Pontuação */}
+              <div className="bg-white rounded-xl shadow-sm border p-6 mt-6">
+                <h3 className="text-lg font-bold mb-4">Critérios de Pontuação</h3>
+                <p className="text-gray-600 text-sm mb-4">Este campo suporta Markdown básico. Veja a prévia abaixo.</p>
+                <textarea
+                  value={scoringCriteria}
+                  onChange={(e) => { initialLoadRef.current = false; setScoringCriteria(e.target.value); }}
+                  className="w-full px-4 py-3 border rounded-lg text-sm"
+                  rows="6"
+                  placeholder="Ex.:\n- Placar exato: **3 pontos**\n- Resultado correto: *1 ponto*"
+                />
+                <div className="mt-4 p-4 bg-gray-50 rounded-lg">
+                  <h4 className="font-semibold mb-2">Prévia formatada:</h4>
+                  <div className="text-sm text-gray-800" dangerouslySetInnerHTML={{ __html: markdownToHtml(scoringCriteria) }} />
+                </div>
+              </div>
+
+              {/* Regras de Desempate */}
+              <div className="bg-white rounded-xl shadow-sm border p-6 mt-6">
+                <h3 className="text-lg font-bold mb-4">Regras de Desempate</h3>
+                <p className="text-gray-600 text-sm mb-4">Este campo suporta Markdown básico. Veja a prévia abaixo.</p>
+                <textarea
+                  value={tiebreakRules}
+                  onChange={(e) => { initialLoadRef.current = false; setTiebreakRules(e.target.value); }}
+                  className="w-full px-4 py-3 border rounded-lg text-sm"
+                  rows="6"
+                  placeholder="Ex.:\n1. Maior número de placares exatos\n2. Maior número de acertos de resultado"
+                />
+                <div className="mt-4 p-4 bg-gray-50 rounded-lg">
+                  <h4 className="font-semibold mb-2">Prévia formatada:</h4>
+                  <div className="text-sm text-gray-800" dangerouslySetInnerHTML={{ __html: markdownToHtml(tiebreakRules) }} />
+                </div>
+              </div>
             </div>
           </div>
         )}
@@ -2189,6 +2507,7 @@ const UserPanel = ({ setView }) => {
   const [editingPredictions, setEditingPredictions] = useState(null);
   const [selectedEstablishment, setSelectedEstablishment] = useState(null);
   const [showEstablishmentModal, setShowEstablishmentModal] = useState(false);
+  const [showRulesModal, setShowRulesModal] = useState(false);
 
   const toggleRound = (roundId) => {
     setExpandedRounds(prev => ({ ...prev, [roundId]: !prev[roundId] }));
@@ -2839,10 +3158,7 @@ const UserPanel = ({ setView }) => {
       });
     });
     
-    return rankingEntries.sort((a, b) => {
-      if (b.points !== a.points) return b.points - a.points;
-      return b.predictions - a.predictions;
-    });
+    return rankingEntries.sort((a, b) => b.points - a.points);
   };
 
   const getRoundPrize = (roundId) => {
@@ -2900,7 +3216,7 @@ const UserPanel = ({ setView }) => {
 
       <div className="bg-white border-b">
         <div className="max-w-7xl mx-auto px-4">
-          <div className="flex gap-6">
+          <div className="flex gap-6 items-center">
             {['predictions', 'ranking', 'history'].map(tab => (
               <button key={tab} onClick={() => setActiveTab(tab)} className={`py-4 px-2 border-b-2 font-medium ${activeTab === tab ? 'border-green-600 text-green-600' : 'border-transparent text-gray-500'}`}>
                 {tab === 'predictions' && <><Target className="inline mr-2" size={18} />Palpites</>}
@@ -2908,9 +3224,29 @@ const UserPanel = ({ setView }) => {
                 {tab === 'history' && <><Calendar className="inline mr-2" size={18} />Minhas Rodadas</>}
               </button>
             ))}
+            <button onClick={() => setShowRulesModal(true)} className="py-4 px-2 border-b-2 font-medium border-transparent text-gray-500 hover:text-green-700 flex items-center gap-2">
+              <FileText className="inline mr-2" size={18} />Regras
+            </button>
           </div>
         </div>
       </div>
+
+      {showRulesModal && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
+          <div className="bg-white rounded-xl max-w-3xl w-full">
+            <div className="p-6 border-b flex justify-between items-center">
+              <div className="flex items-center gap-3">
+                <FileText className="text-green-600" size={24} />
+                <h3 className="text-2xl font-bold">Regras do Bolão</h3>
+              </div>
+              <button onClick={() => setShowRulesModal(false)}><X size={24} /></button>
+            </div>
+            <div className="p-6">
+              <RulesCard />
+            </div>
+          </div>
+        </div>
+      )}
 
       <div className="max-w-7xl mx-auto px-4 py-6">
         {activeTab === 'predictions' && (
