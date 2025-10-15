@@ -125,6 +125,68 @@ const AppProvider = ({ children }) => {
   const [settings, setSettings] = useState(null);
   const [loading, setLoading] = useState(true);
 
+  // Sessão persistente com timeout de 10 min e renovação automática
+  const SESSION_KEY = 'bb2025.session';
+  const SESSION_TIMEOUT_MS = 10 * 60 * 1000;
+  const SESSION_SECRET = 'bb-2025-local-secret';
+
+  const textEncoder = new TextEncoder();
+  const toHex = (buf) => Array.from(new Uint8Array(buf)).map(b => b.toString(16).padStart(2, '0')).join('');
+  const sha256 = async (str) => toHex(await crypto.subtle.digest('SHA-256', textEncoder.encode(str)));
+
+  const readSession = () => {
+    try {
+      const raw = localStorage.getItem(SESSION_KEY);
+      return raw ? JSON.parse(raw) : null;
+    } catch {
+      return null;
+    }
+  };
+
+  const writeSession = async (user) => {
+    const now = Date.now();
+    const session = {
+      userId: user.id,
+      isAdmin: !!user.isAdmin,
+      issuedAt: now,
+      lastActiveAt: now,
+      expiresAt: now + SESSION_TIMEOUT_MS,
+    };
+    session.sig = await sha256(`${session.userId}|${session.issuedAt}|${SESSION_SECRET}`);
+    localStorage.setItem(SESSION_KEY, JSON.stringify(session));
+    return session;
+  };
+
+  const clearSession = () => {
+    try { localStorage.removeItem(SESSION_KEY); } catch {}
+  };
+
+  const isSessionValid = async (s) => {
+    if (!s) return false;
+    if (s.expiresAt && Date.now() > s.expiresAt) return false;
+    const expected = await sha256(`${s.userId}|${s.issuedAt}|${SESSION_SECRET}`);
+    return s.sig === expected;
+  };
+
+  const touchSession = () => {
+    const s = readSession();
+    if (!s) return;
+    const now = Date.now();
+    s.lastActiveAt = now;
+    s.expiresAt = now + SESSION_TIMEOUT_MS;
+    try { localStorage.setItem(SESSION_KEY, JSON.stringify(s)); } catch {}
+  };
+
+  const login = async (user) => {
+    setCurrentUser(user);
+    await writeSession(user);
+  };
+
+  const logout = () => {
+    setCurrentUser(null);
+    clearSession();
+  };
+
   useEffect(() => {
     const loadData = async () => {
       try {
@@ -164,8 +226,40 @@ const AppProvider = ({ children }) => {
     return () => uns.forEach(u => u());
   }, []);
 
+  // Restaura sessão quando usuários são carregados
+  useEffect(() => {
+    let mounted = true;
+    const restore = async () => {
+      const s = readSession();
+      if (!s) return;
+      const ok = await isSessionValid(s);
+      if (!ok) { clearSession(); return; }
+      const u = users.find(u => u.id === s.userId);
+      if (u && mounted) setCurrentUser(u);
+    };
+    if (users && users.length) restore();
+    return () => { mounted = false; };
+  }, [users]);
+
+  // Renova por atividade e impõe expiração por inatividade
+  useEffect(() => {
+    if (!currentUser) return;
+    const onActivity = () => touchSession();
+    const events = ['mousemove', 'mousedown', 'keydown', 'touchstart', 'scroll', 'visibilitychange', 'focus'];
+    events.forEach(e => window.addEventListener(e, onActivity, { passive: true }));
+    const checker = setInterval(() => {
+      const s = readSession();
+      if (s && s.expiresAt && Date.now() > s.expiresAt) { logout(); }
+    }, 15000);
+    return () => {
+      events.forEach(e => window.removeEventListener(e, onActivity));
+      clearInterval(checker);
+    };
+  }, [currentUser]);
+
   const value = {
     currentUser, setCurrentUser, users, teams, rounds, predictions, establishments, settings, loading,
+    login, logout,
     addUser: async (d) => { const r = await addDoc(collection(db, 'users'), { ...d, createdAt: serverTimestamp() }); return { id: r.id, ...d }; },
     updateUser: async (id, d) => await updateDoc(doc(db, 'users', id), d),
     deleteUser: async (id) => await deleteDoc(doc(db, 'users', id)),
@@ -219,7 +313,7 @@ const AppProvider = ({ children }) => {
 };
 
 const LoginScreen = ({ setView }) => {
-  const { users, setCurrentUser, addUser } = useApp();
+  const { users, login, addUser } = useApp();
   const [whatsapp, setWhatsapp] = useState('');
   const [password, setPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
@@ -230,7 +324,7 @@ const LoginScreen = ({ setView }) => {
   const handleLogin = () => {
     const user = users.find(u => u.whatsapp === whatsapp && u.password === password);
     if (user) {
-      setCurrentUser(user);
+      login(user);
       setView(user.isAdmin ? 'admin' : 'user');
       setError('');
     } else {
@@ -602,7 +696,7 @@ const PasswordModal = ({ user, onSave, onCancel }) => {
 };
 
 const AdminPanel = ({ setView }) => {
-  const { currentUser, setCurrentUser, teams, rounds, users, predictions, establishments, settings, addRound, updateRound, deleteRound, addTeam, updateTeam, deleteTeam, updateUser, deleteUser, resetTeamsToSerieA2025, updatePrediction, updateSettings, addEstablishment, updateEstablishment, deleteEstablishment } = useApp();
+  const { currentUser, setCurrentUser, logout, teams, rounds, users, predictions, establishments, settings, addRound, updateRound, deleteRound, addTeam, updateTeam, deleteTeam, updateUser, deleteUser, resetTeamsToSerieA2025, updatePrediction, updateSettings, addEstablishment, updateEstablishment, deleteEstablishment } = useApp();
   
   console.log('AdminPanel - Settings:', settings);
   
@@ -1244,7 +1338,7 @@ const AdminPanel = ({ setView }) => {
               <p className="text-green-100 text-sm">Bolão Brasileirão 2025</p>
             </div>
           </div>
-          <button onClick={() => { setCurrentUser(null); setView('login'); }} className="flex items-center gap-2 bg-green-700 px-4 py-2 rounded-lg">
+          <button onClick={() => { logout(); setView('login'); }} className="flex items-center gap-2 bg-green-700 px-4 py-2 rounded-lg">
             <LogOut size={18} /> Sair
           </button>
         </div>
@@ -2085,7 +2179,7 @@ const AdminPanel = ({ setView }) => {
 };
 
 const UserPanel = ({ setView }) => {
-  const { currentUser, setCurrentUser, teams, rounds, predictions, users, establishments, addPrediction, settings } = useApp();
+  const { currentUser, setCurrentUser, logout, teams, rounds, predictions, users, establishments, addPrediction, settings } = useApp();
   const [activeTab, setActiveTab] = useState('predictions');
   const [selectedRound, setSelectedRound] = useState(null);
   const [showConfirmModal, setShowConfirmModal] = useState(false);
@@ -2796,7 +2890,7 @@ const UserPanel = ({ setView }) => {
               <h1 className="text-3xl font-bold">Olá, {currentUser.name}! 👋</h1>
               <p className="text-green-100 mt-1">Bolão Brasileirão 2025</p>
             </div>
-            <button onClick={() => { setCurrentUser(null); setView('login'); }} className="flex items-center gap-2 bg-green-700 px-4 py-2 rounded-lg">
+            <button onClick={() => { logout(); setView('login'); }} className="flex items-center gap-2 bg-green-700 px-4 py-2 rounded-lg">
               <LogOut size={18} /> Sair
             </button>
           </div>
@@ -3182,6 +3276,14 @@ const UserPanel = ({ setView }) => {
 function App() {
   const { currentUser, loading } = useApp();
   const [view, setView] = useState('login');
+
+  useEffect(() => {
+    if (currentUser) {
+      setView(currentUser.isAdmin ? 'admin' : 'user');
+    } else {
+      setView('login');
+    }
+  }, [currentUser]);
 
   if (loading) {
     return (
