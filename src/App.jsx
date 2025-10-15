@@ -1,7 +1,8 @@
 import React, { useState, useEffect, useRef, createContext, useContext } from 'react';
 import { Trophy, Users, Calendar, TrendingUp, LogOut, Eye, EyeOff, Plus, Edit2, Trash2, Upload, ExternalLink, X, UserPlus, Target, Award, ChevronDown, ChevronUp, Check, Key, DollarSign, CheckCircle, XCircle, AlertCircle, FileText, Download, Store, Filter } from 'lucide-react';
 import { initializeApp } from 'firebase/app';
-import { getFirestore, collection, addDoc, updateDoc, deleteDoc, doc, getDocs, onSnapshot, serverTimestamp } from 'firebase/firestore';
+import { getFirestore, collection, addDoc, updateDoc, deleteDoc, doc, getDocs, getDoc, onSnapshot, serverTimestamp, query, where } from 'firebase/firestore';
+import bcrypt from 'bcryptjs';
 
 const firebaseConfig = {
   apiKey: "AIzaSyAZkL5Q4g1tAAVIZP4mhL6EyjLywjmyfX4",
@@ -68,7 +69,8 @@ const initializeDatabase = async () => {
     ];
 
     for (const user of initialUsers) {
-      await addDoc(collection(db, 'users'), { ...user, createdAt: serverTimestamp() });
+      const hashed = await bcrypt.hash(user.password, 10);
+      await addDoc(collection(db, 'users'), { ...user, password: hashed, createdAt: serverTimestamp() });
     }
 
     for (const team of SERIE_A_2025_TEAMS) {
@@ -128,7 +130,7 @@ const AppProvider = ({ children }) => {
   // Sessão persistente com timeout de 10 min e renovação automática
   const SESSION_KEY = 'bb2025.session';
   const SESSION_TIMEOUT_MS = 10 * 60 * 1000;
-  const SESSION_SECRET = 'bb-2025-local-secret';
+  const SESSION_SECRET = import.meta.env?.VITE_SESSION_SECRET || 'bb-2025-local-secret';
 
   const textEncoder = new TextEncoder();
   const toHex = (buf) => Array.from(new Uint8Array(buf)).map(b => b.toString(16).padStart(2, '0')).join('');
@@ -182,6 +184,12 @@ const AppProvider = ({ children }) => {
     await writeSession(user);
   };
 
+  const requireAdmin = () => {
+    if (!currentUser?.isAdmin) {
+      throw new Error('Ação restrita ao administrador');
+    }
+  };
+
   const logout = () => {
     setCurrentUser(null);
     clearSession();
@@ -199,7 +207,7 @@ const AppProvider = ({ children }) => {
           getDocs(collection(db, 'settings')),
           getDocs(collection(db, 'establishments'))
         ]);
-        setUsers(u.docs.map(d => ({ id: d.id, ...d.data() })));
+        setUsers(u.docs.map(d => { const data = d.data(); const { password, ...rest } = data; return { id: d.id, ...rest }; }));
         setTeams(t.docs.map(d => ({ id: d.id, ...d.data() })).sort((a, b) => a.name.localeCompare(b.name)));
         setRounds(r.docs.map(d => ({ id: d.id, ...d.data() })));
         setPredictions(p.docs.map(d => ({ id: d.id, ...d.data() })));
@@ -219,7 +227,7 @@ const AppProvider = ({ children }) => {
       onSnapshot(collection(db, 'rounds'), s => setRounds(s.docs.map(d => ({ id: d.id, ...d.data() })))),
       onSnapshot(collection(db, 'teams'), s => setTeams(s.docs.map(d => ({ id: d.id, ...d.data() })).sort((a, b) => a.name.localeCompare(b.name)))),
       onSnapshot(collection(db, 'predictions'), s => setPredictions(s.docs.map(d => ({ id: d.id, ...d.data() })))),
-      onSnapshot(collection(db, 'users'), s => setUsers(s.docs.map(d => ({ id: d.id, ...d.data() })))),
+      onSnapshot(collection(db, 'users'), s => setUsers(s.docs.map(d => { const data = d.data(); const { password, ...rest } = data; return { id: d.id, ...rest }; }))),
       onSnapshot(collection(db, 'establishments'), s => setEstablishments(s.docs.map(d => ({ id: d.id, ...d.data() })))),
       onSnapshot(collection(db, 'settings'), s => setSettings(s.docs.length > 0 ? { id: s.docs[0].id, ...s.docs[0].data() } : null))
     ];
@@ -260,19 +268,37 @@ const AppProvider = ({ children }) => {
   const value = {
     currentUser, setCurrentUser, users, teams, rounds, predictions, establishments, settings, loading,
     login, logout,
-    addUser: async (d) => { const r = await addDoc(collection(db, 'users'), { ...d, createdAt: serverTimestamp() }); return { id: r.id, ...d }; },
-    updateUser: async (id, d) => await updateDoc(doc(db, 'users', id), d),
-    deleteUser: async (id) => await deleteDoc(doc(db, 'users', id)),
-    addTeam: async (d) => { const r = await addDoc(collection(db, 'teams'), { ...d, createdAt: serverTimestamp() }); return { id: r.id, ...d }; },
-    updateTeam: async (id, d) => await updateDoc(doc(db, 'teams', id), d),
-    deleteTeam: async (id) => await deleteDoc(doc(db, 'teams', id)),
+    addUser: async (d) => {
+      const toSave = { ...d };
+      if (toSave.password) {
+        toSave.password = await bcrypt.hash(toSave.password, 10);
+      }
+      const r = await addDoc(collection(db, 'users'), { ...toSave, createdAt: serverTimestamp() });
+      return { id: r.id, ...toSave };
+    },
+    updateUser: async (id, d) => {
+      const isSelf = currentUser?.id === id;
+      const isAdminUser = !!currentUser?.isAdmin;
+      if (!isAdminUser && !isSelf) throw new Error('Não autorizado');
+      const toSave = { ...d };
+      if (toSave.password) {
+        toSave.password = await bcrypt.hash(toSave.password, 10);
+      }
+      await updateDoc(doc(db, 'users', id), toSave);
+    },
+    deleteUser: async (id) => { requireAdmin(); return await deleteDoc(doc(db, 'users', id)); },
+    addTeam: async (d) => { requireAdmin(); const r = await addDoc(collection(db, 'teams'), { ...d, createdAt: serverTimestamp() }); return { id: r.id, ...d }; },
+    updateTeam: async (id, d) => { requireAdmin(); return await updateDoc(doc(db, 'teams', id), d); },
+    deleteTeam: async (id) => { requireAdmin(); return await deleteDoc(doc(db, 'teams', id)); },
     deleteAllTeams: async () => {
+      requireAdmin();
       const snapshot = await getDocs(collection(db, 'teams'));
       for (const doc of snapshot.docs) {
         await deleteDoc(doc.ref);
       }
     },
     resetTeamsToSerieA2025: async () => {
+      requireAdmin();
       const snapshot = await getDocs(collection(db, 'teams'));
       for (const doc of snapshot.docs) {
         await deleteDoc(doc.ref);
@@ -281,10 +307,12 @@ const AppProvider = ({ children }) => {
         await addDoc(collection(db, 'teams'), { ...team, createdAt: serverTimestamp() });
       }
     },
-    addRound: async (d) => { const r = await addDoc(collection(db, 'rounds'), { ...d, createdAt: serverTimestamp() }); return { id: r.id, ...d }; },
-    updateRound: async (id, d) => await updateDoc(doc(db, 'rounds', id), d),
-    deleteRound: async (id) => await deleteDoc(doc(db, 'rounds', id)),
+    addRound: async (d) => { requireAdmin(); const r = await addDoc(collection(db, 'rounds'), { ...d, createdAt: serverTimestamp() }); return { id: r.id, ...d }; },
+    updateRound: async (id, d) => { requireAdmin(); return await updateDoc(doc(db, 'rounds', id), d); },
+    deleteRound: async (id) => { requireAdmin(); return await deleteDoc(doc(db, 'rounds', id)); },
     addPrediction: async (d) => { 
+      if (!currentUser) throw new Error('Não autenticado');
+      if (currentUser.id !== d.userId && !currentUser.isAdmin) throw new Error('Não autorizado');
       const r = await addDoc(collection(db, 'predictions'), { 
         ...d, 
         paid: false, 
@@ -293,8 +321,15 @@ const AppProvider = ({ children }) => {
       }); 
       return { id: r.id, ...d }; 
     },
-    updatePrediction: async (id, d) => await updateDoc(doc(db, 'predictions', id), d),
+    updatePrediction: async (id, d) => {
+      const existing = predictions.find(p => p.id === id);
+      if (!existing) throw new Error('Palpite inexistente');
+      if (existing.userId !== currentUser?.id && !currentUser?.isAdmin) throw new Error('Não autorizado');
+      return await updateDoc(doc(db, 'predictions', id), d);
+    },
     deleteCartelaPredictions: async (userId, roundId, cartelaCode) => {
+      if (!currentUser) throw new Error('Não autenticado');
+      if (currentUser.id !== userId && !currentUser.isAdmin) throw new Error('Não autorizado');
       try {
         const toDelete = predictions.filter(p => 
           p.userId === userId && 
@@ -310,10 +345,11 @@ const AppProvider = ({ children }) => {
         throw err;
       }
     },
-    addEstablishment: async (d) => { const r = await addDoc(collection(db, 'establishments'), { ...d, createdAt: serverTimestamp() }); return { id: r.id, ...d }; },
-    updateEstablishment: async (id, d) => await updateDoc(doc(db, 'establishments', id), d),
-    deleteEstablishment: async (id) => await deleteDoc(doc(db, 'establishments', id)),
+    addEstablishment: async (d) => { requireAdmin(); const r = await addDoc(collection(db, 'establishments'), { ...d, createdAt: serverTimestamp() }); return { id: r.id, ...d }; },
+    updateEstablishment: async (id, d) => { requireAdmin(); return await updateDoc(doc(db, 'establishments', id), d); },
+    deleteEstablishment: async (id) => { requireAdmin(); return await deleteDoc(doc(db, 'establishments', id)); },
     updateSettings: async (d) => {
+      requireAdmin();
       if (settings?.id) {
         console.log('Atualizando settings com ID:', settings.id, 'Dados:', d);
         await updateDoc(doc(db, 'settings', settings.id), d);
@@ -438,7 +474,7 @@ const RulesCard = () => {
 };
 
 const LoginScreen = ({ setView }) => {
-  const { users, login, addUser } = useApp();
+  const { users, login, addUser, updateUser } = useApp();
   const [whatsapp, setWhatsapp] = useState('');
   const [password, setPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
@@ -447,27 +483,69 @@ const LoginScreen = ({ setView }) => {
   const [reg, setReg] = useState({ name: '', whatsapp: '', password: '', confirmPassword: '' });
   const [showRulesModal, setShowRulesModal] = useState(false);
 
-  const handleLogin = () => {
-    const user = users.find(u => u.whatsapp === whatsapp && u.password === password);
-    if (user) {
-      login(user);
-      setView(user.isAdmin ? 'admin' : 'user');
-      setError('');
-    } else {
-      setError('WhatsApp ou senha incorretos');
+  const normalizeWhatsapp = (s) => {
+    const d = (s || '').replace(/\D/g, '');
+    // Brasil: use os últimos 11 dígitos (DDD + número), removendo código do país se presente
+    return d.length > 11 ? d.slice(-11) : d;
+  };
+
+  const handleLogin = async () => {
+    const phone = normalizeWhatsapp(whatsapp);
+    let user = null;
+    const candidate = users.find(u => normalizeWhatsapp(u.whatsapp) === phone);
+    if (candidate) {
+      try {
+        const d = await getDoc(doc(db, 'users', candidate.id));
+        if (d.exists()) user = { id: d.id, ...d.data() };
+      } catch (e) { console.error('Erro ao buscar usuário por ID:', e); }
     }
+    if (!user) {
+      try {
+        const snap = await getDocs(query(collection(db, 'users'), where('whatsapp', '==', phone)));
+        if (snap.docs.length) {
+          const d = snap.docs[0];
+          user = { id: d.id, ...d.data() };
+        }
+      } catch (e) { console.error('Erro ao buscar usuário:', e); }
+    }
+    if (user) {
+      const stored = user.password || '';
+      let ok = false;
+      if (/^\$2[aby]\$/.test(stored)) {
+        try { ok = await bcrypt.compare(password, stored); } catch { ok = false; }
+      } else {
+        // Compatibilidade com senhas legadas em texto plano + migração para hash
+        ok = stored === password;
+        if (ok) {
+          try {
+            // autentica primeiro para cumprir a política do updateUser
+            await login(user);
+            await updateUser(user.id, { password });
+          } catch {}
+        }
+      }
+      if (ok) {
+        // garante sessão e view correta
+        await login(user);
+        setView(user.isAdmin ? 'admin' : 'user');
+        setError('');
+        return;
+      }
+    }
+    setError('WhatsApp ou senha incorretos');
   };
 
   const handleRegister = async () => {
     if (!reg.name || !reg.whatsapp || !reg.password) return setError('Preencha todos!');
     if (reg.password !== reg.confirmPassword) return setError('Senhas diferentes!');
     if (reg.password.length < 6) return setError('Senha mínimo 6!');
-    if (users.find(u => u.whatsapp === reg.whatsapp)) return setError('WhatsApp já cadastrado!');
+    const phone = normalizeWhatsapp(reg.whatsapp);
+    if (users.find(u => normalizeWhatsapp(u.whatsapp) === phone)) return setError('WhatsApp já cadastrado!');
     try {
-      await addUser({ name: reg.name, whatsapp: reg.whatsapp, password: reg.password, isAdmin: false, balance: 0 });
+      await addUser({ name: reg.name, whatsapp: phone, password: reg.password, isAdmin: false, balance: 0 });
       alert('✅ Cadastrado!');
       setShowRegister(false);
-      setWhatsapp(reg.whatsapp);
+      setWhatsapp(phone);
       setReg({ name: '', whatsapp: '', password: '', confirmPassword: '' });
       setError('');
     } catch (e) {
