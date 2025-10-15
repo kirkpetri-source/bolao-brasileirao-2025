@@ -294,6 +294,22 @@ const AppProvider = ({ children }) => {
       return { id: r.id, ...d }; 
     },
     updatePrediction: async (id, d) => await updateDoc(doc(db, 'predictions', id), d),
+    deleteCartelaPredictions: async (userId, roundId, cartelaCode) => {
+      try {
+        const toDelete = predictions.filter(p => 
+          p.userId === userId && 
+          p.roundId === roundId && 
+          (p.cartelaCode || 'ANTIGA') === cartelaCode &&
+          !p.paid
+        );
+        for (const pred of toDelete) {
+          await deleteDoc(doc(db, 'predictions', pred.id));
+        }
+      } catch (err) {
+        console.error('Erro ao excluir cartela:', err);
+        throw err;
+      }
+    },
     addEstablishment: async (d) => { const r = await addDoc(collection(db, 'establishments'), { ...d, createdAt: serverTimestamp() }); return { id: r.id, ...d }; },
     updateEstablishment: async (id, d) => await updateDoc(doc(db, 'establishments', id), d),
     deleteEstablishment: async (id) => await deleteDoc(doc(db, 'establishments', id)),
@@ -2716,7 +2732,7 @@ const AdminPanel = ({ setView }) => {
 };
 
 const UserPanel = ({ setView }) => {
-  const { currentUser, setCurrentUser, logout, teams, rounds, predictions, users, establishments, addPrediction, settings } = useApp();
+  const { currentUser, setCurrentUser, logout, teams, rounds, predictions, users, establishments, addPrediction, settings, deleteCartelaPredictions } = useApp();
   const [activeTab, setActiveTab] = useState('predictions');
   const [selectedRound, setSelectedRound] = useState(null);
   const [showConfirmModal, setShowConfirmModal] = useState(false);
@@ -2727,6 +2743,7 @@ const UserPanel = ({ setView }) => {
   const [selectedEstablishment, setSelectedEstablishment] = useState(null);
   const [showEstablishmentModal, setShowEstablishmentModal] = useState(false);
   const [showRulesModal, setShowRulesModal] = useState(false);
+  const [cartelaDetails, setCartelaDetails] = useState(null);
 
   const toggleRound = (roundId) => {
     setExpandedRounds(prev => ({ ...prev, [roundId]: !prev[roundId] }));
@@ -2816,45 +2833,55 @@ const UserPanel = ({ setView }) => {
     setShowEstablishmentModal(false);
   };
 
+  const handleDeleteCartela = async (roundId, cartelaCode) => {
+    const confirmed = window.confirm('Excluir palpites desta cartela pendente? Esta ação não pode ser desfeita.');
+    if (!confirmed) return;
+    try {
+      await deleteCartelaPredictions(currentUser.id, roundId, cartelaCode);
+    } catch (err) {
+      alert('Erro ao excluir cartela: ' + err.message);
+    }
+  };
+
   const EstablishmentModal = ({ onSelect, onCancel }) => (
     <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
-      <div className="bg-white rounded-xl max-w-md w-full">
-        <div className="p-6 border-b">
-          <h3 className="text-2xl font-bold flex items-center gap-2">
-            <Store size={24} className="text-orange-600" />
+      <div className="bg-white rounded-xl max-w-md w-full max-h-[90vh] overflow-y-auto">
+        <div className="p-4 border-b sticky top-0 bg-white">
+          <h3 className="text-xl font-bold flex items-center gap-2">
+            <Store size={22} className="text-orange-600" />
             Selecione o Estabelecimento
           </h3>
-          <p className="text-gray-600 text-sm mt-2">Escolha onde você está participando</p>
+          <p className="text-gray-600 text-xs mt-1">Escolha onde você está participando</p>
         </div>
-        <div className="p-6 space-y-3 max-h-96 overflow-y-auto">
+        <div className="p-4 space-y-2">
           <button
             onClick={() => onSelect(null)}
-            className="w-full p-4 border-2 rounded-lg hover:bg-gray-50 text-left transition"
+            className="group w-full p-3 border rounded-lg text-left transition hover:border-gray-300 focus:outline-none focus:ring-2 focus:ring-gray-300"
           >
-            <p className="font-medium">Nenhum estabelecimento</p>
-            <p className="text-sm text-gray-500">Participação direta</p>
+            <p className="font-medium text-sm">Nenhum estabelecimento</p>
+            <p className="text-xs text-gray-500">Participação direta</p>
           </button>
           {establishments.map(est => (
             <button
               key={est.id}
               onClick={() => onSelect(est.id)}
-              className="w-full p-4 border-2 rounded-lg hover:bg-orange-50 hover:border-orange-300 text-left transition"
+              className="group w-full p-3 border rounded-lg text-left transition hover:bg-orange-50 hover:border-orange-300 focus:outline-none focus:ring-2 focus:ring-orange-300"
             >
-              <div className="flex items-start gap-3">
-                <div className="bg-orange-100 p-2 rounded-lg">
-                  <Store size={20} className="text-orange-600" />
+              <div className="flex items-start gap-2">
+                <div className="bg-orange-100 p-1.5 rounded-lg">
+                  <Store size={18} className="text-orange-600" />
                 </div>
-                <div>
-                  <p className="font-bold">{est.name}</p>
-                  {est.contact && <p className="text-sm text-gray-600">{est.contact}</p>}
-                  {est.phone && <p className="text-xs text-gray-500">{est.phone}</p>}
+                <div className="leading-tight">
+                  <p className="font-medium text-sm">{est.name}</p>
+                  {est.contact && <p className="text-xs text-gray-600">{est.contact}</p>}
+                  {est.phone && <p className="text-[11px] text-gray-500">{est.phone}</p>}
                 </div>
               </div>
             </button>
           ))}
         </div>
-        <div className="p-6 border-t">
-          <button onClick={onCancel} className="w-full px-6 py-2 border rounded-lg">Cancelar</button>
+        <div className="p-4 border-t sticky bottom-0 bg-white">
+          <button onClick={onCancel} className="w-full px-4 py-2 border rounded-lg text-sm">Cancelar</button>
         </div>
       </div>
     </div>
@@ -3251,6 +3278,56 @@ const UserPanel = ({ setView }) => {
     );
   };
 
+  const CartelaDetailsModal = ({ round, cartela, onClose }) => {
+    const { teams, establishments } = useApp();
+    return (
+      <div className="fixed inset-0 bg-black bg-opacity-70 flex items-center justify-center p-4 z-50">
+        <div className="bg-white rounded-2xl max-w-lg w-full max-h-[90vh] overflow-y-auto">
+          <div className="p-6 border-b sticky top-0 bg-white">
+            <div className="flex items-center gap-2">
+              <FileText size={20} className="text-blue-600" />
+              <h3 className="text-xl font-bold">Detalhes da Cartela</h3>
+            </div>
+            <div className="mt-2">
+              <p className="font-mono text-sm font-bold text-blue-700">🎫 {cartela.code}</p>
+              <p className="text-xs text-gray-600">{round.name}</p>
+              {cartela.establishmentId && (
+                <p className="text-xs text-orange-600 mt-1 flex items-center gap-1">
+                  <Store size={12} /> {(establishments.find(e => e.id === cartela.establishmentId) || {}).name}
+                </p>
+              )}
+            </div>
+          </div>
+          <div className="p-6 space-y-3">
+            {cartela.predictions.map((p) => {
+              const match = round.matches?.find(m => m.id === p.matchId);
+              const homeTeam = teams.find(t => t.id === match?.homeTeamId);
+              const awayTeam = teams.find(t => t.id === match?.awayTeamId);
+              return (
+                <div key={p.matchId} className="border rounded-lg p-3 flex items-center justify-between">
+                  <div className="flex items-center gap-2 min-w-0">
+                    <img src={homeTeam?.logo} alt="" className="w-6 h-6 flex-shrink-0" />
+                    <span className="text-sm truncate">{homeTeam?.name}</span>
+                    <span className="text-gray-400 font-bold mx-2">X</span>
+                    <span className="text-sm truncate">{awayTeam?.name}</span>
+                    <img src={awayTeam?.logo} alt="" className="w-6 h-6 flex-shrink-0" />
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <span className="text-sm font-bold bg-gray-100 px-2 py-1 rounded">{p.homeScore}</span>
+                    <span className="text-sm font-bold bg-gray-100 px-2 py-1 rounded">{p.awayScore}</span>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+          <div className="p-6 border-t sticky bottom-0 bg-white">
+            <button onClick={onClose} className="w-full px-4 py-2 border rounded-lg">Fechar</button>
+          </div>
+        </div>
+      </div>
+    );
+  };
+
   const confirmAndSave = async () => {
     if (!pendingPredictions) return;
     try {
@@ -3513,7 +3590,13 @@ const UserPanel = ({ setView }) => {
                                       {index + 1}
                                     </div>
                                     <div>
-                                      <p className="font-mono text-sm font-bold text-blue-700">{cartela.code}</p>
+                                      <button
+                                        onClick={() => setCartelaDetails({ round, cartela })}
+                                        className="font-mono text-sm font-bold text-blue-700 hover:underline"
+                                        title="Ver detalhes da cartela"
+                                      >
+                                        {cartela.code}
+                                      </button>
                                       <div className="flex items-center gap-2">
                                         <p className="text-xs text-gray-600">{cartela.predictions.length} palpites</p>
                                         {est && (
@@ -3528,6 +3611,15 @@ const UserPanel = ({ setView }) => {
                                     <span className={`px-3 py-1 rounded-full text-xs font-medium ${cartela.paid ? 'bg-green-600 text-white' : 'bg-orange-100 text-orange-700'}`}>
                                       {cartela.paid ? '💰 Pago' : '⚠️ Pendente'}
                                     </span>
+                                    {!cartela.paid && (
+                                      <button
+                                        onClick={() => handleDeleteCartela(round.id, cartela.code)}
+                                        className="px-2 py-1 border rounded-lg text-xs text-red-700 hover:bg-red-50 flex items-center gap-1"
+                                        title="Excluir cartela"
+                                      >
+                                        <Trash2 size={14} /> Excluir
+                                      </button>
+                                    )}
                                   </div>
                                 </div>
                               );
@@ -3822,6 +3914,13 @@ const UserPanel = ({ setView }) => {
           establishmentId={pendingPredictions.establishmentId}
           onConfirm={confirmAndSave} 
           onCancel={() => { setShowConfirmModal(false); setEditingPredictions(pendingPredictions.predictions); }} 
+        />
+      )}
+      {cartelaDetails && (
+        <CartelaDetailsModal
+          round={cartelaDetails.round}
+          cartela={cartelaDetails.cartela}
+          onClose={() => setCartelaDetails(null)}
         />
       )}
     </div>
