@@ -1815,7 +1815,7 @@ const AdminPanel = ({ setView }) => {
       <div className="max-w-7xl mx-auto px-4 py-6">
         {activeTab === 'dashboard' && (
           <div>
-            <div className="flex justify-between items-start mb-6">
+            <div className="flex flex-col md:flex-row md:justify-between md:items-start gap-4 mb-6">
               <div>
                 <h2 className="text-2xl font-bold">Dashboard por Rodada</h2>
                 <p className="text-gray-600 mt-1">Premiação: 85% • Admin: 10% • Estabelecimentos: 5% por palpite vinculado</p>
@@ -2350,7 +2350,7 @@ const AdminPanel = ({ setView }) => {
                   )}
                 </div>
               </div>
-              <div className="flex gap-3">
+              <div className="flex flex-col md:flex-row gap-3 w-full md:w-auto md:items-end">
                 <button onClick={handleResetTeams} className="flex items-center gap-2 bg-orange-600 text-white px-6 py-3 rounded-lg hover:bg-orange-700">
                   <Trophy size={20} /> Resetar para Série A 2025
                 </button>
@@ -2425,7 +2425,7 @@ const AdminPanel = ({ setView }) => {
                 <p className="text-gray-600 mt-1">Gerencie os pagamentos por rodada (R$ 15,00 cada)</p>
               </div>
               <div className="flex gap-3">
-                <div className="w-64">
+                <div className="w-full md:w-64">
                   <label className="block text-sm font-medium mb-2">Filtrar por Estabelecimento</label>
                   <select
                     value={establishmentFilter}
@@ -2439,7 +2439,7 @@ const AdminPanel = ({ setView }) => {
                     ))}
                   </select>
                 </div>
-                <div className="w-64">
+                <div className="w-full md:w-64">
                   <label className="block text-sm font-medium mb-2">Selecione a Rodada</label>
                   <select
                     value={selectedFinanceRound || ''}
@@ -2456,7 +2456,7 @@ const AdminPanel = ({ setView }) => {
                 </div>
                 <button
                   onClick={() => generateFinancialReportPDF(selectedFinanceRound, establishmentFilter)}
-                  className="inline-flex items-center gap-2 bg-orange-600 text-white px-4 py-2 rounded-lg hover:bg-orange-700 disabled:bg-gray-200 disabled:text-gray-500"
+                  className="inline-flex items-center justify-center gap-2 bg-orange-600 text-white px-4 py-2 rounded-lg hover:bg-orange-700 disabled:bg-gray-200 disabled:text-gray-500 w-full md:w-auto"
                   disabled={
                     !selectedFinanceRound ||
                     !establishmentFilter ||
@@ -2555,8 +2555,8 @@ const AdminPanel = ({ setView }) => {
 
                     {/* Filtros */}
                     <div className="bg-white rounded-xl shadow-sm border p-4">
-                      <div className="flex items-center justify-between flex-wrap gap-3">
-                        <div className="flex items-center gap-3">
+                      <div className="flex flex-col md:flex-row md:items-center md:justify-between flex-wrap gap-3">
+                        <div className="flex flex-wrap items-center gap-2">
                           <span className="text-sm font-medium text-gray-700">Filtrar:</span>
                           <button
                             onClick={() => setPaymentFilter('all')}
@@ -2585,7 +2585,7 @@ const AdminPanel = ({ setView }) => {
                         </div>
                         
                         {establishmentFilter !== 'all' && establishmentFilter !== 'none' && (
-                          <div className="bg-orange-50 border border-orange-200 rounded-lg px-4 py-2">
+                          <div className="bg-orange-50 border border-orange-200 rounded-lg px-4 py-2 w-full md:w-auto md:ml-auto">
                             <p className="text-sm text-orange-800">
                               <Store size={14} className="inline mr-1" />
                               <strong>Comissão deste estabelecimento:</strong> R$ {summary.establishmentFee.toFixed(2)}
@@ -2618,7 +2618,8 @@ const AdminPanel = ({ setView }) => {
                           </h3>
                         </div>
                       ) : (
-                        <table className="w-full">
+                        <div className="overflow-x-auto -mx-4 md:mx-0">
+                        <table className="min-w-[720px] w-full text-xs sm:text-sm">
                           <thead className="bg-gray-50 border-b">
                             <tr>
                               <th className="px-6 py-4 text-left text-xs font-medium text-gray-500 uppercase">Participante</th>
@@ -2659,7 +2660,7 @@ const AdminPanel = ({ setView }) => {
                                     )}
                                   </td>
                                   <td className="px-6 py-4 text-center">
-                                    <span className="text-lg font-bold text-gray-900">R$ {summary.betValue.toFixed(2)}</span>
+                                    <span className="text-base md:text-lg font-bold text-gray-900">R$ {summary.betValue.toFixed(2)}</span>
                                   </td>
                                   <td className="px-6 py-4 text-center">
                                     {participant.paid ? (
@@ -2689,6 +2690,7 @@ const AdminPanel = ({ setView }) => {
                             })}
                           </tbody>
                         </table>
+                        </div>
                       )}
                     </div>
                   </div>
