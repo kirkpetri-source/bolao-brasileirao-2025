@@ -1296,7 +1296,6 @@ const AdminPanel = ({ setView }) => {
           script.onload = resolve;
         });
       }
-
       const { jsPDF } = window.jspdf;
       const pdf = new jsPDF();
       const round = rounds.find(r => r.id === roundId);
@@ -1423,6 +1422,207 @@ const AdminPanel = ({ setView }) => {
     } catch (error) {
       console.error('Erro ao gerar PDF:', error);
       alert('❌ Erro ao gerar PDF: ' + error.message);
+    }
+  };
+
+  // Gerar relatório financeiro por rodada e estabelecimento
+  const generateFinancialReportPDF = async (roundId, establishmentId) => {
+    try {
+      if (!roundId) {
+        alert('Selecione uma rodada para gerar o relatório.');
+        return;
+      }
+      if (!establishmentId || establishmentId === 'all' || establishmentId === 'none') {
+        alert('Selecione um estabelecimento específico para gerar o relatório.');
+        return;
+      }
+
+      // Carregar jsPDF via CDN se necessário
+      if (!window.jspdf) {
+        const script = document.createElement('script');
+        script.src = 'https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js';
+        document.head.appendChild(script);
+        await new Promise((resolve) => {
+          script.onload = resolve;
+        });
+      }
+
+      const { jsPDF } = window.jspdf;
+      const pdf = new jsPDF('l', 'mm', 'a4');
+      const pageWidth = pdf.internal.pageSize.getWidth();
+      const pageHeight = pdf.internal.pageSize.getHeight();
+      const leftMargin = 20;
+      const rightMargin = 20;
+      const contentWidth = pageWidth - leftMargin - rightMargin;
+
+      const round = rounds.find(r => r.id === roundId);
+      const establishment = establishments.find(e => e.id === establishmentId);
+      const betValue = settings?.betValue || 15;
+
+      // Participantes filtrados por estabelecimento
+      const allParticipants = getRoundParticipants(roundId);
+      const estParticipants = allParticipants.filter(p => p.establishmentId === establishmentId);
+      const paidParticipants = estParticipants.filter(p => p.paid);
+      const pendingParticipants = estParticipants.filter(p => !p.paid);
+
+      // Resumo (parcial e global)
+      const totalExpected = estParticipants.length * betValue;
+      const totalReceived = paidParticipants.length * betValue;
+      const establishmentFee = paidParticipants.length * betValue * 0.05;
+
+      // Dados globais (para premiacao/admin iguais ao dashboard)
+      const summaryGlobal = getRoundFinancialSummary(roundId, establishmentId, true);
+
+      // Cabeçalho
+      pdf.setFontSize(18);
+      pdf.setFont(undefined, 'bold');
+      pdf.text('Controle Financeiro', leftMargin, 20);
+
+      pdf.setFontSize(12);
+      pdf.setFont(undefined, 'normal');
+      pdf.text(`Rodada: ${round?.name || '-'}`, leftMargin, 28);
+      pdf.text(`Estabelecimento: ${establishment?.name || '-'}`, leftMargin, 34);
+
+      // Totais: exibir APENAS o recebimento do estabelecimento (5%)
+      const boxY = 42;
+      const boxW = 60; // caixa um pouco mais larga em paisagem
+      const boxH = 26;
+      pdf.setFillColor(255, 235, 210); // laranja claro
+      pdf.setDrawColor(240, 180, 120); // borda laranja
+      pdf.roundedRect(leftMargin, boxY, boxW, boxH, 2, 2, 'FD');
+      pdf.setFontSize(9);
+      pdf.setFont(undefined, 'normal');
+      pdf.text('Estabelec. (5%)', leftMargin + 4, boxY + 8);
+      pdf.setFontSize(12);
+      pdf.setFont(undefined, 'bold');
+      pdf.text(`R$ ${establishmentFee.toFixed(2)}`, leftMargin + 4, boxY + 16);
+
+      // Barra de filtros (Todos | Pagos | Pendentes) + comissão do estabelecimento
+      const filterY = boxY + boxH + 12;
+
+      const drawPill = (x, y, text, fill, textColor) => {
+        const padding = 6;
+        const w = pdf.getTextWidth(text) + padding * 2;
+        const h = 9;
+        pdf.setFillColor(...fill);
+        pdf.roundedRect(x, y, w, h, 3, 3, 'F');
+        pdf.setTextColor(...textColor);
+        pdf.setFontSize(10);
+        pdf.setFont(undefined, 'bold');
+        pdf.text(text, x + padding, y + h / 2, { baseline: 'middle' });
+        pdf.setTextColor(0, 0, 0);
+      };
+
+      const totalCount = estParticipants.length;
+      const paidCount = paidParticipants.length;
+      const pendingCount = pendingParticipants.length;
+
+      // Desenhar os 3 filtros
+      let xPos = leftMargin;
+      drawPill(xPos, filterY, `Todos (${totalCount})`, [60, 60, 60], [255, 255, 255]);
+      xPos += pdf.getTextWidth(`Todos (${totalCount})`) + 18;
+      drawPill(xPos, filterY, `Pagos (${paidCount})`, [16, 185, 129], [255, 255, 255]);
+      xPos += pdf.getTextWidth(`Pagos (${paidCount})`) + 18;
+      drawPill(xPos, filterY, `Pendentes (${pendingCount})`, [239, 68, 68], [255, 255, 255]);
+
+      // Comissão deste estabelecimento (pílula à direita)
+      const commissionText = `Comissão deste estabelecimento: R$ ${establishmentFee.toFixed(2)}`;
+      const wCommission = pdf.getTextWidth(commissionText) + 12;
+      const xCommission = leftMargin + contentWidth - wCommission; // alinhar à direita dentro das margens
+      pdf.setFillColor(255, 247, 237); // laranja muito claro
+      pdf.setDrawColor(252, 196, 120);
+      pdf.roundedRect(xCommission, filterY - 0.5, wCommission, 9, 3, 3, 'FD');
+      pdf.setTextColor(180, 83, 9);
+      pdf.setFontSize(10);
+      pdf.setFont(undefined, 'bold');
+      pdf.text(commissionText, xCommission + 6, filterY + 4.5, { baseline: 'middle' });
+      pdf.setTextColor(0, 0, 0);
+
+      // Tabela de participantes (Nome | Cartela | Valor | Status)
+      let y = filterY + 24; // iniciar abaixo da barra de filtros (mais espaço)
+      const colParticipanteX = leftMargin + 2;
+      const colCartelaX = leftMargin + Math.min(140, contentWidth * 0.54);
+      const colValorX = leftMargin + contentWidth - 45;
+      const colStatusX = leftMargin + contentWidth - 15;
+      const headerH = 10;
+      const rowH = 10;
+      const colValorW = 30;
+      const colStatusW = 22;
+      const colValorCenterX = colValorX + colValorW / 2;
+      const colStatusCenterX = colStatusX + colStatusW / 2;
+      pdf.setLineWidth(0.2);
+      const drawHeader = () => {
+        pdf.setFillColor(245, 245, 245);
+        pdf.rect(leftMargin, y, contentWidth, headerH, 'F');
+        pdf.setFontSize(10);
+        pdf.setFont(undefined, 'bold');
+        pdf.text('Participante', colParticipanteX, y + headerH / 2, { baseline: 'middle' });
+        pdf.text('Cartela', colCartelaX, y + headerH / 2, { baseline: 'middle' });
+        pdf.text('Valor', colValorCenterX, y + headerH / 2, { baseline: 'middle', align: 'center' });
+        pdf.text('Status', colStatusCenterX, y + headerH / 2, { baseline: 'middle', align: 'center' });
+        y += headerH;
+      };
+
+      drawHeader();
+
+      const ensurePage = () => {
+        if (y > pageHeight - 25) {
+          pdf.addPage();
+          y = 20;
+          drawHeader();
+        }
+      };
+
+      estParticipants.forEach((p, idx) => {
+        ensurePage();
+        const user = users.find(u => u.id === p.userId);
+        const nome = user?.name || `Participante ${idx + 1}`;
+        const cartelaRaw = p.cartelaCode || 'ANTIGA';
+        const cartela = cartelaRaw.length > 20 ? `${cartelaRaw.slice(0, 20)}…` : cartelaRaw;
+        const status = p.paid ? 'Pago' : 'Não pago';
+        const statusColor = p.paid ? [0, 128, 0] : [200, 0, 0];
+
+        pdf.setFontSize(10);
+        pdf.setFont(undefined, 'normal');
+        const textY = y + rowH / 2;
+        pdf.text(nome, colParticipanteX, textY, { baseline: 'middle' });
+        pdf.text(cartela, colCartelaX, textY, { baseline: 'middle' });
+        pdf.text(`R$ ${betValue.toFixed(2)}`, colValorCenterX, textY, { baseline: 'middle', align: 'center' });
+        pdf.setTextColor(...statusColor);
+        pdf.text(status, colStatusCenterX, textY, { baseline: 'middle', align: 'center' });
+        pdf.setTextColor(0, 0, 0);
+        y += rowH;
+
+        pdf.setDrawColor(230, 230, 230);
+        pdf.line(leftMargin, y, leftMargin + contentWidth, y);
+        y += 2;
+      });
+
+      // Lista de devedores
+      ensurePage();
+      pdf.setFontSize(12);
+      pdf.setFont(undefined, 'bold');
+      pdf.text('Devedores (Não pagos):', 20, y + 8);
+      y += 14;
+      pdf.setFontSize(10);
+      pdf.setFont(undefined, 'normal');
+
+      if (pendingParticipants.length === 0) {
+        pdf.text('Nenhum devedor.', 20, y);
+      } else {
+        pendingParticipants.forEach(p => {
+          ensurePage();
+          const user = users.find(u => u.id === p.userId);
+          pdf.text(`- ${user?.name || 'Participante'} (Cartela: ${p.cartelaCode || 'ANTIGA'})`, 20, y);
+          y += 6;
+        });
+      }
+
+      const fileName = `Financeiro_${round?.name || 'Rodada'}_${establishment?.name || 'Estabelecimento'}.pdf`;
+      pdf.save(fileName);
+    } catch (error) {
+      console.error('Erro ao gerar PDF financeiro:', error);
+      alert('❌ Erro ao gerar PDF.');
     }
   };
 
@@ -2254,6 +2454,23 @@ const AdminPanel = ({ setView }) => {
                     ))}
                   </select>
                 </div>
+                <button
+                  onClick={() => generateFinancialReportPDF(selectedFinanceRound, establishmentFilter)}
+                  className="inline-flex items-center gap-2 bg-orange-600 text-white px-4 py-2 rounded-lg hover:bg-orange-700 disabled:bg-gray-200 disabled:text-gray-500"
+                  disabled={
+                    !selectedFinanceRound ||
+                    !establishmentFilter ||
+                    establishmentFilter === 'all' ||
+                    establishmentFilter === 'none'
+                  }
+                  title={
+                    !selectedFinanceRound || establishmentFilter === 'all' || establishmentFilter === 'none'
+                      ? 'Selecione rodada e estabelecimento específicos'
+                      : 'Gerar relatório PDF'
+                  }
+                >
+                  <Download size={18} /> Gerar PDF
+                </button>
               </div>
             </div>
 
