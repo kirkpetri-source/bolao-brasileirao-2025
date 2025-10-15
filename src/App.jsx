@@ -587,8 +587,8 @@ const EstablishmentForm = ({ establishment, onSave, onCancel }) => {
 
   return (
     <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
-      <div className="bg-white rounded-xl max-w-md w-full">
-        <div className="p-6 border-b flex justify-between items-center">
+      <div className="bg-white rounded-xl max-w-md w-full max-h-[90vh] overflow-y-auto">
+        <div className="p-6 border-b flex justify-between items-center sticky top-0 bg-white">
           <h3 className="text-2xl font-bold">{establishment ? 'Editar' : 'Novo'} Estabelecimento</h3>
           <button onClick={onCancel}><X size={24} /></button>
         </div>
@@ -611,7 +611,7 @@ const EstablishmentForm = ({ establishment, onSave, onCancel }) => {
             <p className="text-xs text-gray-500 mt-1">Padrão: 5%</p>
           </div>
         </div>
-        <div className="p-6 border-t flex gap-3">
+        <div className="p-6 border-t flex gap-3 sticky bottom-0 bg-white">
           <button onClick={onCancel} className="flex-1 px-6 py-2 border rounded-lg">Cancelar</button>
           <button onClick={handleSave} className="flex-1 px-6 py-2 bg-green-600 text-white rounded-lg">Salvar</button>
         </div>
@@ -633,8 +633,8 @@ const TeamForm = ({ team, onSave, onCancel }) => {
 
   return (
     <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
-      <div className="bg-white rounded-xl max-w-md w-full">
-        <div className="p-6 border-b flex justify-between items-center">
+      <div className="bg-white rounded-xl max-w-md w-full max-h-[90vh] overflow-y-auto">
+        <div className="p-6 border-b flex justify-between items-center sticky top-0 bg-white">
           <h3 className="text-2xl font-bold">{team ? 'Editar Time' : 'Novo Time'}</h3>
           <button onClick={onCancel}><X size={24} /></button>
         </div>
@@ -668,7 +668,7 @@ const TeamForm = ({ team, onSave, onCancel }) => {
             {formData.logo && <img src={formData.logo} alt="Preview" className="w-24 h-24 object-contain mx-auto mt-4" />}
           </div>
         </div>
-        <div className="p-6 border-t flex gap-3">
+        <div className="p-6 border-t flex gap-3 sticky bottom-0 bg-white">
           <button onClick={onCancel} className="flex-1 px-6 py-2 border rounded-lg">Cancelar</button>
           <button onClick={handleSave} className="flex-1 px-6 py-2 bg-green-600 text-white rounded-lg">Salvar</button>
         </div>
@@ -705,7 +705,7 @@ const RoundForm = ({ round, teams, rounds, onSave, onCancel }) => {
           <h3 className="text-2xl font-bold">{round ? 'Editar Rodada' : 'Nova Rodada'}</h3>
         </div>
         <div className="p-6 space-y-6">
-          <div className="grid grid-cols-2 gap-4">
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
             <div>
               <label className="block text-sm font-medium mb-2">Número</label>
               <input type="number" value={formData.number} onChange={(e) => setFormData({ ...formData, number: parseInt(e.target.value) })} className="w-full px-4 py-2 border rounded-lg" />
@@ -735,21 +735,21 @@ const RoundForm = ({ round, teams, rounds, onSave, onCancel }) => {
               {formData.matches?.map((match) => (
                 <div key={match.id} className="bg-gray-50 p-4 rounded-lg border">
                   <div className="grid grid-cols-12 gap-3 items-center">
-                    <div className="col-span-5">
+                    <div className="col-span-12 sm:col-span-5">
                       <select value={match.homeTeamId} onChange={(e) => updateMatch(match.id, 'homeTeamId', e.target.value)} className="w-full px-3 py-2 border rounded-lg text-sm">
                         {teams.map(team => <option key={team.id} value={team.id}>{team.name}</option>)}
                       </select>
                     </div>
-                    <div className="col-span-2 text-center font-bold">VS</div>
-                    <div className="col-span-5">
+                    <div className="col-span-12 sm:col-span-2 text-center font-bold">VS</div>
+                    <div className="col-span-12 sm:col-span-5">
                       <select value={match.awayTeamId} onChange={(e) => updateMatch(match.id, 'awayTeamId', e.target.value)} className="w-full px-3 py-2 border rounded-lg text-sm">
                         {teams.map(team => <option key={team.id} value={team.id}>{team.name}</option>)}
                       </select>
                     </div>
-                    <div className="col-span-9">
+                    <div className="col-span-12 sm:col-span-9">
                       <input type="datetime-local" value={match.date} onChange={(e) => updateMatch(match.id, 'date', e.target.value)} className="w-full px-3 py-2 border rounded-lg text-sm" />
                     </div>
-                    <div className="col-span-3 flex justify-end">
+                    <div className="col-span-12 sm:col-span-3 flex sm:justify-end">
                       <button onClick={() => removeMatch(match.id)} className="text-red-600 p-2"><Trash2 size={18} /></button>
                     </div>
                     <div className="col-span-12 flex items-center gap-2">
@@ -757,7 +757,7 @@ const RoundForm = ({ round, teams, rounds, onSave, onCancel }) => {
                       <label className="text-sm">Jogo finalizado</label>
                     </div>
                     {match.finished && (
-                      <div className="col-span-12 grid grid-cols-2 gap-3">
+                      <div className="col-span-12 grid grid-cols-1 sm:grid-cols-2 gap-3">
                         <input type="number" placeholder="Gols Casa" value={match.homeScore || ''} onChange={(e) => updateMatch(match.id, 'homeScore', parseInt(e.target.value) || null)} className="px-3 py-2 border rounded-lg" />
                         <input type="number" placeholder="Gols Fora" value={match.awayScore || ''} onChange={(e) => updateMatch(match.id, 'awayScore', parseInt(e.target.value) || null)} className="px-3 py-2 border rounded-lg" />
                       </div>
@@ -1780,25 +1780,25 @@ const AdminPanel = ({ setView }) => {
   return (
     <div className="min-h-screen bg-gray-50">
       <div className="bg-green-600 text-white shadow-lg">
-        <div className="max-w-7xl mx-auto px-4 py-4 flex justify-between items-center">
+        <div className="max-w-7xl mx-auto px-3 sm:px-4 py-3 sm:py-4 flex flex-col sm:flex-row sm:justify-between sm:items-center gap-3">
           <div className="flex items-center gap-3">
             <Trophy size={32} />
             <div>
-              <h1 className="text-2xl font-bold">Painel Administrativo</h1>
-              <p className="text-green-100 text-sm">Bolão Brasileirão 2025</p>
+              <h1 className="text-xl sm:text-2xl font-bold">Painel Administrativo</h1>
+              <p className="text-green-100 text-xs sm:text-sm">Bolão Brasileirão 2025</p>
             </div>
           </div>
-          <button onClick={() => { logout(); setView('login'); }} className="flex items-center gap-2 bg-green-700 px-4 py-2 rounded-lg">
+          <button onClick={() => { logout(); setView('login'); }} className="w-full sm:w-auto justify-center flex items-center gap-2 bg-green-700 px-3 py-2 rounded-lg text-sm">
             <LogOut size={18} /> Sair
           </button>
         </div>
       </div>
 
       <div className="bg-white border-b">
-        <div className="max-w-7xl mx-auto px-4">
-          <div className="flex gap-6 overflow-x-auto">
+        <div className="max-w-7xl mx-auto px-3 sm:px-4">
+          <div className="flex gap-3 sm:gap-6 overflow-x-auto -mx-2 px-2 sm:mx-0">
             {['dashboard', 'rounds', 'teams', 'establishments', 'participants', 'financial', 'settings'].map(tab => (
-              <button key={tab} onClick={() => setActiveTab(tab)} className={`py-4 px-2 border-b-2 font-medium whitespace-nowrap ${activeTab === tab ? 'border-green-600 text-green-600' : 'border-transparent text-gray-500'}`}>
+              <button key={tab} onClick={() => setActiveTab(tab)} className={`py-3 sm:py-4 px-2 text-sm sm:text-base border-b-2 font-medium whitespace-nowrap ${activeTab === tab ? 'border-green-600 text-green-600' : 'border-transparent text-gray-500'}`}>
                 {tab === 'dashboard' && <><Trophy className="inline mr-2" size={18} />Dashboard</>}
                 {tab === 'rounds' && <><Calendar className="inline mr-2" size={18} />Rodadas</>}
                 {tab === 'teams' && <><Users className="inline mr-2" size={18} />Times</>}
@@ -1812,7 +1812,7 @@ const AdminPanel = ({ setView }) => {
         </div>
       </div>
 
-      <div className="max-w-7xl mx-auto px-4 py-6">
+      <div className="max-w-7xl mx-auto px-3 sm:px-4 py-4 sm:py-6">
         {activeTab === 'dashboard' && (
           <div>
             <div className="flex flex-col md:flex-row md:justify-between md:items-start gap-4 mb-6">
@@ -1820,8 +1820,8 @@ const AdminPanel = ({ setView }) => {
                 <h2 className="text-2xl font-bold">Dashboard por Rodada</h2>
                 <p className="text-gray-600 mt-1">Premiação: 85% • Admin: 10% • Estabelecimentos: 5% por palpite vinculado</p>
               </div>
-              <div className="w-64">
-                <label className="block text-sm font-medium mb-2">Selecione a Rodada</label>
+              <div className="w-full md:w-64">
+                <label className="block text-xs md:text-sm font-medium mb-2">Selecione a Rodada</label>
                 <select
                   value={selectedDashboardRound || ''}
                   onChange={(e) => setSelectedDashboardRound(e.target.value)}
@@ -2099,12 +2099,12 @@ const AdminPanel = ({ setView }) => {
 
         {activeTab === 'establishments' && (
           <div>
-            <div className="flex justify-between mb-6">
+            <div className="flex flex-col sm:flex-row sm:justify-between sm:items-center gap-3 mb-6">
               <div>
                 <h2 className="text-2xl font-bold">Estabelecimentos/Indicadores</h2>
                 <p className="text-gray-600 mt-1">Gerenciar locais que indicam participantes • Comissão: 5%</p>
               </div>
-              <button onClick={() => { setEditingEstablishment(null); setShowEstablishmentForm(true); }} className="flex items-center gap-2 bg-green-600 text-white px-6 py-3 rounded-lg">
+              <button onClick={() => { setEditingEstablishment(null); setShowEstablishmentForm(true); }} className="w-full sm:w-auto flex items-center justify-center gap-2 bg-green-600 text-white px-5 py-2.5 rounded-lg text-sm sm:text-base">
                 <Plus size={20} /> Novo Estabelecimento
               </button>
             </div>
@@ -2163,7 +2163,7 @@ const AdminPanel = ({ setView }) => {
                 <p className="text-gray-600 text-sm mb-4">
                   Defina o valor que será cobrado por participação em cada rodada
                 </p>
-                <div className="flex items-center gap-4">
+                <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-4">
                   <div className="flex-1">
                     <label className="block text-sm font-medium mb-2">Valor por Cartela (R$)</label>
                     <input
@@ -2176,10 +2176,10 @@ const AdminPanel = ({ setView }) => {
                       placeholder="15.00"
                     />
                   </div>
-                  <div className="pt-8">
+                  <div className="pt-2 sm:pt-8 w-full sm:w-auto">
                     <button
                       onClick={handleSaveWhatsAppMessage}
-                      className="px-6 py-3 bg-green-600 text-white rounded-lg font-semibold hover:bg-green-700"
+                      className="w-full sm:w-auto px-6 py-3 bg-green-600 text-white rounded-lg font-semibold hover:bg-green-700"
                     >
                       Salvar
                     </button>
@@ -2212,19 +2212,19 @@ const AdminPanel = ({ setView }) => {
                   placeholder="🏆 *BOLÃO BRASILEIRÃO 2025*&#10;&#10;📋 *{RODADA}*&#10;🎫 *Cartela: {CARTELA}*&#10;✅ Confirmado!&#10;&#10;{PALPITES}&#10;&#10;💰 R$ 15,00&#10;⚠️ *Não pode alterar após pagamento*&#10;&#10;Boa sorte! 🍀"
                 />
 
-                <div className="flex justify-end gap-3 mt-4">
+                <div className="flex flex-col sm:flex-row sm:justify-end gap-3 mt-4">
                   <button
                     onClick={() => {
                       setWhatsappMessage(settings?.whatsappMessage || '🏆 *BOLÃO BRASILEIRÃO 2025*\n\n📋 *{RODADA}*\n🎫 *Cartela: {CARTELA}*\n✅ Confirmado!\n\n{PALPITES}\n\n💰 R$ 15,00\n⚠️ *Não pode alterar após pagamento*\n\nBoa sorte! 🍀');
                       setBetValue(settings?.betValue || 15);
                     }}
-                    className="px-6 py-2 border rounded-lg"
+                    className="w-full sm:w-auto px-6 py-2 border rounded-lg"
                   >
                     Restaurar Padrão
                   </button>
                   <button
                     onClick={handleSaveWhatsAppMessage}
-                    className="px-6 py-2 bg-green-600 text-white rounded-lg"
+                    className="w-full sm:w-auto px-6 py-2 bg-green-600 text-white rounded-lg"
                   >
                     Salvar Configurações
                   </button>
@@ -2314,9 +2314,9 @@ const AdminPanel = ({ setView }) => {
         
         {activeTab === 'rounds' && (
           <div>
-            <div className="flex justify-between mb-6">
+            <div className="flex flex-col sm:flex-row sm:justify-between sm:items-center gap-3 mb-6">
               <h2 className="text-2xl font-bold">Gerenciar Rodadas</h2>
-              <button onClick={() => { setEditingRound(null); setShowRoundForm(true); }} className="flex items-center gap-2 bg-green-600 text-white px-6 py-3 rounded-lg">
+              <button onClick={() => { setEditingRound(null); setShowRoundForm(true); }} className="w-full sm:w-auto flex items-center justify-center gap-2 bg-green-600 text-white px-5 py-2.5 rounded-lg text-sm sm:text-base">
                 <Plus size={20} /> Nova Rodada
               </button>
             </div>
@@ -2338,7 +2338,7 @@ const AdminPanel = ({ setView }) => {
 
         {activeTab === 'teams' && (
           <div>
-            <div className="flex justify-between mb-6">
+            <div className="flex flex-col sm:flex-row sm:justify-between sm:items-center gap-3 mb-6">
               <div>
                 <h2 className="text-2xl font-bold">Gerenciar Times</h2>
                 <div className="flex items-center gap-3 mt-2">
@@ -2350,11 +2350,11 @@ const AdminPanel = ({ setView }) => {
                   )}
                 </div>
               </div>
-              <div className="flex flex-col md:flex-row gap-3 w-full md:w-auto md:items-end">
-                <button onClick={handleResetTeams} className="flex items-center gap-2 bg-orange-600 text-white px-6 py-3 rounded-lg hover:bg-orange-700">
+              <div className="flex flex-col sm:flex-row gap-3 w-full sm:w-auto sm:items-end">
+                <button onClick={handleResetTeams} className="w-full sm:w-auto flex items-center justify-center gap-2 bg-orange-600 text-white px-5 py-2.5 rounded-lg hover:bg-orange-700 text-sm sm:text-base">
                   <Trophy size={20} /> Resetar para Série A 2025
                 </button>
-                <button onClick={() => { setEditingTeam(null); setShowTeamForm(true); }} className="flex items-center gap-2 bg-green-600 text-white px-6 py-3 rounded-lg">
+                <button onClick={() => { setEditingTeam(null); setShowTeamForm(true); }} className="w-full sm:w-auto flex items-center justify-center gap-2 bg-green-600 text-white px-5 py-2.5 rounded-lg text-sm sm:text-base">
                   <Plus size={20} /> Novo Time
                 </button>
               </div>
@@ -2384,12 +2384,12 @@ const AdminPanel = ({ setView }) => {
                 const userPreds = predictions.filter(p => p.userId === user.id);
                 return (
                   <div key={user.id} className="bg-white rounded-xl shadow-sm border p-6">
-                    <div className="flex justify-between items-center">
+                    <div className="flex flex-col sm:flex-row sm:justify-between sm:items-center gap-3">
                       <div>
                         <h3 className="text-lg font-bold">{user.name}</h3>
                         <p className="text-gray-600 text-sm">{user.whatsapp}</p>
                       </div>
-                      <div className="flex items-center gap-4">
+                      <div className="flex flex-wrap items-center gap-3 sm:gap-4">
                         <div className="text-right">
                           <div className="text-2xl font-bold text-green-600">0 pts</div>
                           <p className="text-gray-600 text-sm">{userPreds.length} palpites</p>
@@ -2419,18 +2419,18 @@ const AdminPanel = ({ setView }) => {
 
         {activeTab === 'financial' && (
           <div>
-            <div className="flex justify-between items-start mb-6">
+            <div className="flex flex-col sm:flex-row sm:justify-between sm:items-start gap-4 mb-6">
               <div>
-                <h2 className="text-2xl font-bold">Controle Financeiro</h2>
-                <p className="text-gray-600 mt-1">Gerencie os pagamentos por rodada (R$ 15,00 cada)</p>
+                <h2 className="text-xl sm:text-2xl font-bold">Controle Financeiro</h2>
+                <p className="text-sm sm:text-base text-gray-600 mt-1">Gerencie os pagamentos por rodada (R$ 15,00 cada)</p>
               </div>
-              <div className="flex gap-3">
-                <div className="w-full md:w-64">
-                  <label className="block text-sm font-medium mb-2">Filtrar por Estabelecimento</label>
+              <div className="flex flex-col sm:flex-row gap-3 sm:gap-4 w-full sm:w-auto mt-4 sm:mt-0">
+                <div className="w-full sm:w-64">
+                  <label className="block text-xs sm:text-sm font-medium mb-2">Filtrar por Estabelecimento</label>
                   <select
                     value={establishmentFilter}
                     onChange={(e) => setEstablishmentFilter(e.target.value)}
-                    className="w-full px-4 py-2 border rounded-lg bg-white"
+                    className="w-full px-3 sm:px-4 py-2 border rounded-lg bg-white"
                   >
                     <option value="all">Todos</option>
                     <option value="none">Sem estabelecimento</option>
@@ -2439,12 +2439,12 @@ const AdminPanel = ({ setView }) => {
                     ))}
                   </select>
                 </div>
-                <div className="w-full md:w-64">
-                  <label className="block text-sm font-medium mb-2">Selecione a Rodada</label>
+                <div className="w-full sm:w-64">
+                  <label className="block text-xs sm:text-sm font-medium mb-2">Selecione a Rodada</label>
                   <select
                     value={selectedFinanceRound || ''}
                     onChange={(e) => setSelectedFinanceRound(e.target.value)}
-                    className="w-full px-4 py-2 border rounded-lg bg-white"
+                    className="w-full px-3 sm:px-4 py-2 border rounded-lg bg-white"
                   >
                     <option value="">Todas as rodadas</option>
                     {rounds.filter(r => r.status !== 'upcoming').sort((a, b) => b.number - a.number).map(round => (
@@ -2456,7 +2456,7 @@ const AdminPanel = ({ setView }) => {
                 </div>
                 <button
                   onClick={() => generateFinancialReportPDF(selectedFinanceRound, establishmentFilter)}
-                  className="inline-flex items-center justify-center gap-2 bg-orange-600 text-white px-4 py-2 rounded-lg hover:bg-orange-700 disabled:bg-gray-200 disabled:text-gray-500 w-full md:w-auto"
+                  className="inline-flex items-center justify-center gap-2 bg-orange-600 text-white px-3 sm:px-4 py-2 text-sm rounded-lg hover:bg-orange-700 disabled:bg-gray-200 disabled:text-gray-500 w-full sm:w-auto"
                   disabled={
                     !selectedFinanceRound ||
                     !establishmentFilter ||
@@ -2499,15 +2499,15 @@ const AdminPanel = ({ setView }) => {
                 return (
                   <div className="space-y-6">
                     {/* Resumo Financeiro */}
-                    <div className="grid grid-cols-1 md:grid-cols-5 gap-4">
+                    <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-5 gap-3 sm:gap-4">
                       <div className="bg-blue-50 border-2 border-blue-200 rounded-xl p-4">
                         <div className="flex items-center justify-between">
                           <div>
                             <p className="text-blue-600 text-sm font-medium">Total Esperado</p>
-                            <p className="text-2xl font-bold text-blue-900">R$ {summary.totalExpected.toFixed(2)}</p>
+                            <p className="text-xl sm:text-2xl font-bold text-blue-900">R$ {summary.totalExpected.toFixed(2)}</p>
                             <p className="text-xs text-blue-600 mt-1">{summary.totalParticipations} cartelas</p>
                           </div>
-                          <Users className="text-blue-400" size={32} />
+                          <Users className="text-blue-400" size={28} />
                         </div>
                       </div>
 
@@ -2515,10 +2515,10 @@ const AdminPanel = ({ setView }) => {
                         <div className="flex items-center justify-between">
                           <div>
                             <p className="text-green-600 text-sm font-medium">Recebido</p>
-                            <p className="text-2xl font-bold text-green-900">R$ {summary.totalReceived.toFixed(2)}</p>
+                            <p className="text-xl sm:text-2xl font-bold text-green-900">R$ {summary.totalReceived.toFixed(2)}</p>
                             <p className="text-xs text-green-600 mt-1">{summary.paidCount} pagamentos</p>
                           </div>
-                          <CheckCircle className="text-green-400" size={32} />
+                          <CheckCircle className="text-green-400" size={28} />
                         </div>
                       </div>
 
@@ -2526,9 +2526,9 @@ const AdminPanel = ({ setView }) => {
                         <div className="flex items-center justify-between">
                           <div>
                             <p className="text-yellow-600 text-sm font-medium">Premiação (85%)</p>
-                            <p className="text-2xl font-bold text-yellow-900">R$ {summary.prizePool.toFixed(2)}</p>
+                            <p className="text-xl sm:text-2xl font-bold text-yellow-900">R$ {summary.prizePool.toFixed(2)}</p>
                           </div>
-                          <Trophy className="text-yellow-400" size={32} />
+                          <Trophy className="text-yellow-400" size={28} />
                         </div>
                       </div>
 
@@ -2536,9 +2536,9 @@ const AdminPanel = ({ setView }) => {
                         <div className="flex items-center justify-between">
                           <div>
                             <p className="text-purple-600 text-sm font-medium">Admin (10%)</p>
-                            <p className="text-2xl font-bold text-purple-900">R$ {summary.adminFee.toFixed(2)}</p>
+                            <p className="text-xl sm:text-2xl font-bold text-purple-900">R$ {summary.adminFee.toFixed(2)}</p>
                           </div>
-                          <Award className="text-purple-400" size={32} />
+                          <Award className="text-purple-400" size={28} />
                         </div>
                       </div>
 
@@ -2546,9 +2546,9 @@ const AdminPanel = ({ setView }) => {
                         <div className="flex items-center justify-between">
                           <div>
                             <p className="text-orange-600 text-sm font-medium">Estabelec. (5%)</p>
-                            <p className="text-2xl font-bold text-orange-900">R$ {summary.establishmentFee.toFixed(2)}</p>
+                            <p className="text-xl sm:text-2xl font-bold text-orange-900">R$ {summary.establishmentFee.toFixed(2)}</p>
                           </div>
-                          <Store className="text-orange-400" size={32} />
+                          <Store className="text-orange-400" size={28} />
                         </div>
                       </div>
                     </div>
@@ -2560,7 +2560,7 @@ const AdminPanel = ({ setView }) => {
                           <span className="text-sm font-medium text-gray-700">Filtrar:</span>
                           <button
                             onClick={() => setPaymentFilter('all')}
-                            className={`px-4 py-2 rounded-lg text-sm font-medium transition ${
+                            className={`px-3 md:px-4 py-1.5 md:py-2 rounded-lg text-xs md:text-sm font-medium transition ${
                               paymentFilter === 'all' ? 'bg-gray-800 text-white' : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
                             }`}
                           >
@@ -2568,7 +2568,7 @@ const AdminPanel = ({ setView }) => {
                           </button>
                           <button
                             onClick={() => setPaymentFilter('paid')}
-                            className={`px-4 py-2 rounded-lg text-sm font-medium transition ${
+                            className={`px-3 md:px-4 py-1.5 md:py-2 rounded-lg text-xs md:text-sm font-medium transition ${
                               paymentFilter === 'paid' ? 'bg-green-600 text-white' : 'bg-green-100 text-green-700 hover:bg-green-200'
                             }`}
                           >
@@ -2576,7 +2576,7 @@ const AdminPanel = ({ setView }) => {
                           </button>
                           <button
                             onClick={() => setPaymentFilter('pending')}
-                            className={`px-4 py-2 rounded-lg text-sm font-medium transition ${
+                            className={`px-3 md:px-4 py-1.5 md:py-2 rounded-lg text-xs md:text-sm font-medium transition ${
                               paymentFilter === 'pending' ? 'bg-red-600 text-white' : 'bg-red-100 text-red-700 hover:bg-red-200'
                             }`}
                           >
@@ -2585,8 +2585,8 @@ const AdminPanel = ({ setView }) => {
                         </div>
                         
                         {establishmentFilter !== 'all' && establishmentFilter !== 'none' && (
-                          <div className="bg-orange-50 border border-orange-200 rounded-lg px-4 py-2 w-full md:w-auto md:ml-auto">
-                            <p className="text-sm text-orange-800">
+                          <div className="bg-orange-50 border border-orange-200 rounded-lg px-3 py-2 w-full md:w-auto md:ml-auto">
+                            <p className="text-xs sm:text-sm text-orange-800">
                               <Store size={14} className="inline mr-1" />
                               <strong>Comissão deste estabelecimento:</strong> R$ {summary.establishmentFee.toFixed(2)}
                             </p>
@@ -2618,16 +2618,16 @@ const AdminPanel = ({ setView }) => {
                           </h3>
                         </div>
                       ) : (
-                        <div className="overflow-x-auto -mx-4 md:mx-0">
+                        <div className="overflow-x-auto -mx-2 sm:mx-0">
                         <table className="min-w-[720px] w-full text-xs sm:text-sm">
                           <thead className="bg-gray-50 border-b">
                             <tr>
-                              <th className="px-6 py-4 text-left text-xs font-medium text-gray-500 uppercase">Participante</th>
-                              <th className="px-6 py-4 text-center text-xs font-medium text-gray-500 uppercase">Cartela</th>
-                              <th className="px-6 py-4 text-left text-xs font-medium text-gray-500 uppercase">Estabelecimento</th>
-                              <th className="px-6 py-4 text-center text-xs font-medium text-gray-500 uppercase">Valor</th>
-                              <th className="px-6 py-4 text-center text-xs font-medium text-gray-500 uppercase">Status</th>
-                              <th className="px-6 py-4 text-center text-xs font-medium text-gray-500 uppercase">Ação</th>
+                              <th className="px-4 sm:px-6 py-3 sm:py-4 text-left text-[10px] sm:text-xs font-medium text-gray-500 uppercase">Participante</th>
+                              <th className="px-4 sm:px-6 py-3 sm:py-4 text-center text-[10px] sm:text-xs font-medium text-gray-500 uppercase">Cartela</th>
+                              <th className="px-4 sm:px-6 py-3 sm:py-4 text-left text-[10px] sm:text-xs font-medium text-gray-500 uppercase">Estabelecimento</th>
+                              <th className="px-4 sm:px-6 py-3 sm:py-4 text-center text-[10px] sm:text-xs font-medium text-gray-500 uppercase">Valor</th>
+                              <th className="px-4 sm:px-6 py-3 sm:py-4 text-center text-[10px] sm:text-xs font-medium text-gray-500 uppercase">Status</th>
+                              <th className="px-4 sm:px-6 py-3 sm:py-4 text-center text-[10px] sm:text-xs font-medium text-gray-500 uppercase">Ação</th>
                             </tr>
                           </thead>
                           <tbody className="divide-y">
@@ -2635,21 +2635,21 @@ const AdminPanel = ({ setView }) => {
                               const user = users.find(u => u.id === participant.userId);
                               const establishment = establishments.find(e => e.id === participant.establishmentId);
                               if (!user) return null;
-                              
+                               
                               return (
                                 <tr key={`${participant.userId}-${participant.cartelaCode}`} className={participant.paid ? 'bg-green-50' : ''}>
-                                  <td className="px-6 py-4">
+                                  <td className="px-4 sm:px-6 py-3 sm:py-4">
                                     <div>
                                       <span className="font-medium">{user.name}</span>
                                       <p className="text-xs text-gray-500">{user.whatsapp}</p>
                                     </div>
                                   </td>
-                                  <td className="px-6 py-4 text-center">
+                                  <td className="px-4 sm:px-6 py-3 sm:py-4 text-center">
                                     <span className="font-mono text-sm bg-blue-100 text-blue-700 px-2 py-1 rounded">
                                       {participant.cartelaCode}
                                     </span>
                                   </td>
-                                  <td className="px-6 py-4">
+                                  <td className="px-4 sm:px-6 py-3 sm:py-4">
                                     {establishment ? (
                                       <div>
                                         <p className="font-medium text-sm text-orange-600">{establishment.name}</p>
@@ -2659,10 +2659,10 @@ const AdminPanel = ({ setView }) => {
                                       <span className="text-xs text-gray-400">Nenhum</span>
                                     )}
                                   </td>
-                                  <td className="px-6 py-4 text-center">
+                                  <td className="px-4 sm:px-6 py-3 sm:py-4 text-center">
                                     <span className="text-base md:text-lg font-bold text-gray-900">R$ {summary.betValue.toFixed(2)}</span>
                                   </td>
-                                  <td className="px-6 py-4 text-center">
+                                  <td className="px-4 sm:px-6 py-3 sm:py-4 text-center">
                                     {participant.paid ? (
                                       <span className="inline-flex items-center gap-1 bg-green-100 text-green-700 px-3 py-1 rounded-full text-sm font-medium">
                                         <CheckCircle size={16} /> Pago
@@ -2673,10 +2673,10 @@ const AdminPanel = ({ setView }) => {
                                       </span>
                                     )}
                                   </td>
-                                  <td className="px-6 py-4 text-center">
+                                  <td className="px-4 sm:px-6 py-3 sm:py-4 text-center">
                                     <button
                                       onClick={() => togglePaymentStatus(participant.userId, selectedFinanceRound, participant.cartelaCode)}
-                                      className={`px-4 py-2 rounded-lg font-medium transition ${
+                                      className={`px-3 py-2 rounded-lg text-sm font-medium transition ${
                                         participant.paid
                                           ? 'bg-red-100 text-red-700 hover:bg-red-200'
                                           : 'bg-green-600 text-white hover:bg-green-700'
