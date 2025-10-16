@@ -2681,8 +2681,8 @@ const AdminPanel = ({ setView }) => {
           <div>
             <div className="flex flex-col sm:flex-row sm:justify-between sm:items-start gap-4 mb-6">
               <div>
-                <h2 className="text-xl sm:text-2xl font-bold">Controle Financeiro</h2>
-                <p className="text-sm sm:text-base text-gray-600 mt-1">Gerencie os pagamentos por rodada (R$ 15,00 cada)</p>
+        <h2 className="text-xl sm:text-2xl font-bold">Controle Financeiro</h2>
+        <p className="text-sm sm:text-base text-gray-600 mt-1">Gerencie os pagamentos por rodada.</p>
               </div>
               <div className="flex flex-col sm:flex-row gap-3 sm:gap-4 w-full sm:w-auto mt-4 sm:mt-0">
                 <div className="w-full sm:w-64">
