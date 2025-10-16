@@ -265,6 +265,27 @@ const AppProvider = ({ children }) => {
     };
   }, [currentUser]);
 
+  // Fechamento automático de rodadas no banco (somente admin em primeiro plano)
+  useEffect(() => {
+    if (!currentUser?.isAdmin) return;
+    const timer = setInterval(async () => {
+      try {
+        const toClose = rounds.filter(r => {
+          if (r.status !== 'open') return false;
+          if (!r.closeAt) return false;
+          const ts = new Date(r.closeAt).getTime();
+          return !isNaN(ts) && Date.now() >= ts;
+        });
+        for (const r of toClose) {
+          await updateDoc(doc(db, 'rounds', r.id), { status: 'closed' });
+        }
+      } catch (err) {
+        console.error('Erro ao fechar rodada automaticamente:', err);
+      }
+    }, 30000); // verifica a cada 30s
+    return () => clearInterval(timer);
+  }, [currentUser, rounds]);
+
   const value = {
     currentUser, setCurrentUser, users, teams, rounds, predictions, establishments, settings, loading,
     login, logout,
@@ -772,7 +793,39 @@ const TeamForm = ({ team, onSave, onCancel }) => {
 };
 
 const RoundForm = ({ round, teams, rounds, onSave, onCancel }) => {
-  const [formData, setFormData] = useState(round || { number: rounds.length + 1, name: `Rodada ${rounds.length + 1}`, status: 'upcoming', matches: [] });
+  const toLocalInputFromISO = (iso) => {
+    try {
+      const d = new Date(iso);
+      if (isNaN(d.getTime())) return '';
+      const pad = (n) => String(n).padStart(2, '0');
+      const y = d.getFullYear();
+      const m = pad(d.getMonth() + 1);
+      const day = pad(d.getDate());
+      const hh = pad(d.getHours());
+      const mm = pad(d.getMinutes());
+      return `${y}-${m}-${day}T${hh}:${mm}`;
+    } catch {
+      return '';
+    }
+  };
+
+  const toUtcIsoFromLocalInput = (localVal) => {
+    try {
+      const d = new Date(localVal);
+      if (isNaN(d.getTime())) return '';
+      return d.toISOString();
+    } catch {
+      return '';
+    }
+  };
+
+  const [formData, setFormData] = useState(() => {
+    if (round) {
+      const closeLocal = round.closeAt ? toLocalInputFromISO(round.closeAt) : '';
+      return { ...round, closeAt: closeLocal };
+    }
+    return { number: rounds.length + 1, name: `Rodada ${rounds.length + 1}`, status: 'upcoming', matches: [], closeAt: '' };
+  });
 
   const addMatch = () => {
     setFormData({
@@ -817,6 +870,16 @@ const RoundForm = ({ round, teams, rounds, onSave, onCancel }) => {
               <option value="closed">🔒 Fechada</option>
               <option value="finished">🏁 Finalizada</option>
             </select>
+          </div>
+          <div>
+            <label className="block text-sm font-medium mb-2">Fechamento programado</label>
+            <input
+              type="datetime-local"
+              value={formData.closeAt || ''}
+              onChange={(e) => setFormData({ ...formData, closeAt: e.target.value })}
+              className="w-full px-4 py-2 border rounded-lg"
+            />
+            <p className="text-xs text-gray-500 mt-1">Após este horário, palpites serão bloqueados automaticamente.</p>
           </div>
           <div>
             <div className="flex justify-between mb-4">
@@ -886,7 +949,30 @@ const RoundForm = ({ round, teams, rounds, onSave, onCancel }) => {
         </div>
         <div className="p-6 border-t flex gap-3 sticky bottom-0 bg-white">
           <button onClick={onCancel} className="px-6 py-2 border rounded-lg">Cancelar</button>
-          <button onClick={() => onSave(formData)} className="px-6 py-2 bg-green-600 text-white rounded-lg">Salvar</button>
+          <button
+            onClick={() => {
+              if (formData.closeAt) {
+                const ts = new Date(formData.closeAt).getTime();
+                if (isNaN(ts)) {
+                  alert('Data/horário de fechamento inválida(o).');
+                  return;
+                }
+                // Para status 'upcoming' ou 'open', exigir futuro
+                if ((formData.status === 'upcoming' || formData.status === 'open') && ts <= Date.now()) {
+                  alert('A data/horário de fechamento deve ser no futuro para rodadas abertas/futuras.');
+                  return;
+                }
+              }
+              const toSave = {
+                ...formData,
+                closeAt: formData.closeAt ? toUtcIsoFromLocalInput(formData.closeAt) : ''
+              };
+              onSave(toSave);
+            }}
+            className="px-6 py-2 bg-green-600 text-white rounded-lg"
+          >
+            Salvar
+          </button>
         </div>
       </div>
     </div>
@@ -1328,7 +1414,7 @@ const AdminPanel = ({ setView }) => {
 
   const calculateUserRoundPoints = (userId, roundId, cartelaCode = null) => {
     const round = rounds.find(r => r.id === roundId);
-    if (!round || round.status !== 'finished') return 0;
+    if (!round || (round.status !== 'finished' && round.status !== 'closed')) return 0;
     
     if (cartelaCode) {
       const cartelaPreds = predictions.filter(p => 
@@ -1829,13 +1915,27 @@ const AdminPanel = ({ setView }) => {
     return badges[status] || badges.upcoming;
   };
 
-  const openRounds = rounds.filter(r => r.status === 'open');
-  const closedRounds = rounds.filter(r => r.status === 'closed');
+  const isRoundTimedClosed = (round) => {
+    if (!round?.closeAt) return false;
+    const ts = new Date(round.closeAt).getTime();
+    return !isNaN(ts) && Date.now() >= ts;
+  };
+
+  const formatDateTime = (value) => {
+    if (!value) return null;
+    const dt = new Date(value);
+    if (isNaN(dt.getTime())) return null;
+    return dt.toLocaleString('pt-BR', { dateStyle: 'short', timeStyle: 'short' });
+  };
+
+  const openRounds = rounds.filter(r => r.status === 'open' && !isRoundTimedClosed(r));
+  const closedRounds = rounds.filter(r => r.status === 'closed' || (r.status === 'open' && isRoundTimedClosed(r)));
   const finishedRounds = rounds.filter(r => r.status === 'finished');
   const upcomingRounds = rounds.filter(r => r.status === 'upcoming');
 
   const renderRoundCard = (round) => {
-    const badge = getStatusBadge(round.status);
+    const effectiveStatus = (round.status === 'open' && isRoundTimedClosed(round)) ? 'closed' : round.status;
+    const badge = getStatusBadge(effectiveStatus);
     const isExpanded = expandedAdminRounds[round.id];
     
     return (
@@ -2849,16 +2949,17 @@ const UserPanel = ({ setView }) => {
     setExpandedRounds(prev => ({ ...prev, [roundId]: !prev[roundId] }));
   };
 
-  const openRounds = rounds.filter(r => r.status === 'open');
-  const closedRounds = rounds.filter(r => r.status === 'closed').sort((a, b) => b.number - a.number);
+  const openRounds = rounds.filter(r => r.status === 'open' && !isRoundTimedClosed(r));
+  const closedRounds = rounds.filter(r => r.status === 'closed' || (r.status === 'open' && isRoundTimedClosed(r))).sort((a, b) => b.number - a.number);
   const finishedRounds = rounds.filter(r => r.status === 'finished').sort((a, b) => b.number - a.number);
+  const rankableRounds = rounds.filter(r => r.status === 'finished' || r.status === 'closed').sort((a, b) => b.number - a.number);
   const upcomingRounds = rounds.filter(r => r.status === 'upcoming').sort((a, b) => a.number - b.number);
 
   useEffect(() => {
-    if (!selectedRankingRound && finishedRounds.length > 0) {
-      setSelectedRankingRound(finishedRounds[0].id);
+    if (!selectedRankingRound && rankableRounds.length > 0) {
+      setSelectedRankingRound(rankableRounds[0].id);
     }
-  }, [finishedRounds]);
+  }, [rankableRounds]);
 
   const getRoundPredictions = (roundId) => {
     return predictions.filter(p => p.userId === currentUser.id && p.roundId === roundId);
@@ -2920,6 +3021,11 @@ const UserPanel = ({ setView }) => {
   };
 
   const handleStartPrediction = (round) => {
+    // Bloqueio automático por fechamento programado
+    if (isRoundTimedClosed(round)) {
+      alert('Rodada fechada para palpites pelo cronograma definido.');
+      return;
+    }
     setSelectedRound(round);
     if (establishments.length > 0) {
       setShowEstablishmentModal(true);
@@ -2992,9 +3098,11 @@ const UserPanel = ({ setView }) => {
     const userCartelas = getUserCartelasForRound(round.id);
     const hasPredictions = userCartelas.length > 0;
     const points = calculateRoundPoints(round.id);
+    const timedClosed = isRoundTimedClosed(round);
     
     const getStatusInfo = () => {
-      switch (round.status) {
+      const effStatus = (round.status === 'open' && timedClosed) ? 'closed' : round.status;
+      switch (effStatus) {
         case 'upcoming':
           return { text: 'Futura', color: 'bg-gray-100 text-gray-700', icon: '🔜' };
         case 'open':
@@ -3027,6 +3135,11 @@ const UserPanel = ({ setView }) => {
                 <span className={`px-3 py-1 rounded-full text-xs font-medium ${status.color}`}>
                   {status.icon} {status.text}
                 </span>
+                {round.closeAt && (
+                  <span className="bg-gray-100 text-gray-700 px-3 py-1 rounded-full text-xs font-medium">
+                    Fecha: {formatDateTime(round.closeAt) || round.closeAt}
+                  </span>
+                )}
                 {hasPredictions && (
                   <span className="bg-blue-100 text-blue-700 px-3 py-1 rounded-full text-xs font-medium">
                     {userCartelas.length} cartela(s)
@@ -3037,9 +3150,14 @@ const UserPanel = ({ setView }) => {
                     {totalPoints} pontos total
                   </span>
                 )}
-                {round.status === 'open' && !hasPredictions && (
+                {((round.status === 'open' && !timedClosed) && !hasPredictions) && (
                   <span className="bg-red-100 text-red-700 px-3 py-1 rounded-full text-xs font-medium">
                     Sem palpites
+                  </span>
+                )}
+                {(round.status === 'open' && timedClosed) && (
+                  <span className="bg-yellow-100 text-yellow-700 px-3 py-1 rounded-full text-xs font-medium">
+                    Fechada automaticamente
                   </span>
                 )}
               </div>
@@ -3060,7 +3178,7 @@ const UserPanel = ({ setView }) => {
               </div>
             )}
 
-            {round.status === 'open' && !hasPredictions && (
+            {(round.status === 'open' && !timedClosed) && !hasPredictions && (
               <div className="text-center py-8">
                 <Target className="mx-auto text-orange-500 mb-3" size={48} />
                 <p className="text-gray-800 font-bold mb-2">Você ainda não fez seus palpites!</p>
@@ -3070,6 +3188,15 @@ const UserPanel = ({ setView }) => {
                 >
                   Fazer Palpites Agora
                 </button>
+              </div>
+            )}
+            {(round.status === 'open' && timedClosed) && (
+              <div className="text-center py-8">
+                <AlertCircle className="mx-auto text-yellow-600 mb-3" size={48} />
+                <p className="text-gray-800 font-bold">Rodada fechada automaticamente para palpites.</p>
+                {round.closeAt && (
+                  <p className="text-gray-600 text-sm mt-1">Fechada em {formatDateTime(round.closeAt) || round.closeAt}</p>
+                )}
               </div>
             )}
 
@@ -3196,6 +3323,7 @@ const UserPanel = ({ setView }) => {
   const PredictionForm = ({ round, initialPredictions = null }) => {
     const [localPreds, setLocalPreds] = useState({});
     const [cartelaCode] = useState(generateCartelaCode());
+    const timedClosed = isRoundTimedClosed(round);
     
     useEffect(() => {
       if (initialPredictions) {
@@ -3211,6 +3339,10 @@ const UserPanel = ({ setView }) => {
     }, [initialPredictions]);
 
     const handleSubmit = () => {
+      if (timedClosed) {
+        alert('Rodada fechada para palpites pelo cronograma definido.');
+        return;
+      }
       const allPreds = round.matches.map(match => ({
         match,
         homeScore: localPreds[match.id]?.home !== undefined ? parseInt(localPreds[match.id].home) : null,
@@ -3246,6 +3378,11 @@ const UserPanel = ({ setView }) => {
             </div>
           </div>
           <div className="p-6 space-y-4">
+            {timedClosed && (
+              <div className="bg-yellow-50 border border-yellow-200 text-yellow-800 px-4 py-3 rounded-lg">
+                🔒 Rodada fechada automaticamente {round.closeAt && (<span>em {formatDateTime(round.closeAt) || round.closeAt}</span>)}.
+              </div>
+            )}
             {round.matches?.map((match) => {
               const homeTeam = teams.find(t => t.id === match.homeTeamId);
               const awayTeam = teams.find(t => t.id === match.awayTeamId);
@@ -3269,8 +3406,9 @@ const UserPanel = ({ setView }) => {
                         type="number" 
                         min="0" 
                         max="20" 
-                        value={localPreds[match.id]?.home || ''} 
+                        value={localPreds[match.id]?.home ?? ''} 
                         onChange={(e) => setLocalPreds({ ...localPreds, [match.id]: { ...localPreds[match.id], home: e.target.value } })} 
+                        disabled={timedClosed}
                         className="w-16 px-2 py-2 border rounded text-center font-bold" 
                         placeholder="0" 
                       />
@@ -3279,8 +3417,9 @@ const UserPanel = ({ setView }) => {
                         type="number" 
                         min="0" 
                         max="20" 
-                        value={localPreds[match.id]?.away || ''} 
+                        value={localPreds[match.id]?.away ?? ''} 
                         onChange={(e) => setLocalPreds({ ...localPreds, [match.id]: { ...localPreds[match.id], away: e.target.value } })} 
+                        disabled={timedClosed}
                         className="w-16 px-2 py-2 border rounded text-center font-bold" 
                         placeholder="0" 
                       />
@@ -3292,7 +3431,7 @@ const UserPanel = ({ setView }) => {
           </div>
           <div className="p-6 border-t flex gap-3 sticky bottom-0 bg-white">
             <button onClick={() => { setSelectedRound(null); setEditingPredictions(null); setPendingPredictions(null); setSelectedEstablishment(null); }} className="px-6 py-2 border rounded-lg">Cancelar</button>
-            <button onClick={handleSubmit} className="px-6 py-2 bg-green-600 text-white rounded-lg">Confirmar</button>
+            <button onClick={handleSubmit} disabled={timedClosed} className={`px-6 py-2 rounded-lg ${timedClosed ? 'bg-gray-300 text-gray-600 cursor-not-allowed' : 'bg-green-600 text-white'}`}>Confirmar</button>
           </div>
         </div>
       </div>
@@ -3486,7 +3625,7 @@ const UserPanel = ({ setView }) => {
 
   const calculateUserRoundPoints = (userId, roundId, cartelaCode = null) => {
     const round = rounds.find(r => r.id === roundId);
-    if (!round || round.status !== 'finished') return 0;
+    if (!round || (round.status !== 'finished' && round.status !== 'closed')) return 0;
     
     if (cartelaCode) {
       const cartelaPreds = predictions.filter(p => 
@@ -3759,23 +3898,23 @@ const UserPanel = ({ setView }) => {
                   onChange={(e) => setSelectedRankingRound(e.target.value)}
                   className="w-full px-4 py-2 border rounded-lg bg-white"
                 >
-                  {finishedRounds.length === 0 && (
-                    <option value="">Nenhuma rodada finalizada</option>
+                  {rankableRounds.length === 0 && (
+                    <option value="">Nenhuma rodada fechada ou finalizada</option>
                   )}
-                  {finishedRounds.map(round => (
+                  {rankableRounds.map(round => (
                     <option key={round.id} value={round.id}>
-                      {round.name}
+                      {round.name} {round.status === 'closed' ? '• Parcial' : ''}
                     </option>
                   ))}
                 </select>
               </div>
             </div>
 
-            {!selectedRankingRound || finishedRounds.length === 0 ? (
+            {!selectedRankingRound || rankableRounds.length === 0 ? (
               <div className="bg-white rounded-xl p-12 text-center border-2 border-dashed">
                 <Trophy className="mx-auto text-gray-400 mb-4" size={48} />
-                <h3 className="text-xl font-semibold mb-2">Nenhuma rodada finalizada</h3>
-                <p className="text-gray-500">O ranking será exibido após a finalização da primeira rodada</p>
+                <h3 className="text-xl font-semibold mb-2">Nenhuma rodada fechada ou finalizada</h3>
+                <p className="text-gray-500">O ranking aparece para rodadas fechadas (parcial) e finalizadas (final)</p>
               </div>
             ) : (
               <div className="space-y-6">
@@ -3842,6 +3981,9 @@ const UserPanel = ({ setView }) => {
                       {rounds.find(r => r.id === selectedRankingRound)?.name}
                     </h3>
                     <p className="text-sm text-green-100 mt-1">⚠️ Apenas palpites pagos são contabilizados</p>
+                    {rounds.find(r => r.id === selectedRankingRound)?.status === 'closed' && (
+                      <p className="text-xs text-yellow-200 mt-1">Resultados parciais (rodada fechada)</p>
+                    )}
                   </div>
                   <table className="w-full">
                     <thead className="bg-gray-50 border-b">
