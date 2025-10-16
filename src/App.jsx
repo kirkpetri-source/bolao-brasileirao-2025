@@ -852,8 +852,30 @@ const RoundForm = ({ round, teams, rounds, onSave, onCancel }) => {
                     </div>
                     {match.finished && (
                       <div className="col-span-12 grid grid-cols-1 sm:grid-cols-2 gap-3">
-                        <input type="number" placeholder="Gols Casa" value={match.homeScore || ''} onChange={(e) => updateMatch(match.id, 'homeScore', parseInt(e.target.value) || null)} className="px-3 py-2 border rounded-lg" />
-                        <input type="number" placeholder="Gols Fora" value={match.awayScore || ''} onChange={(e) => updateMatch(match.id, 'awayScore', parseInt(e.target.value) || null)} className="px-3 py-2 border rounded-lg" />
+                        <input
+                          type="number"
+                          placeholder="Gols Casa"
+                          min="0"
+                          value={match.homeScore ?? ''}
+                          onChange={(e) => updateMatch(
+                            match.id,
+                            'homeScore',
+                            e.target.value === '' ? null : parseInt(e.target.value, 10)
+                          )}
+                          className="px-3 py-2 border rounded-lg"
+                        />
+                        <input
+                          type="number"
+                          placeholder="Gols Fora"
+                          min="0"
+                          value={match.awayScore ?? ''}
+                          onChange={(e) => updateMatch(
+                            match.id,
+                            'awayScore',
+                            e.target.value === '' ? null : parseInt(e.target.value, 10)
+                          )}
+                          className="px-3 py-2 border rounded-lg"
+                        />
                       </div>
                     )}
                   </div>
