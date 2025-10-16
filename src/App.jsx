@@ -3180,6 +3180,10 @@ const UserPanel = ({ setView }) => {
     const isOpenOrUpcoming = round.status === 'open' || round.status === 'upcoming';
     const canPredictNoExisting = isOpenOrUpcoming && !timedClosed && !hasPredictions;
     const isTimedClosedOpenOrUpcoming = isOpenOrUpcoming && timedClosed;
+    const totalMatches = round.matches?.length || 0;
+    const finishedMatchesCount = round.matches?.filter(m => m.finished && m.homeScore !== null && m.awayScore !== null).length || 0;
+    const hasAnyFinished = finishedMatchesCount > 0;
+    const progressPercent = totalMatches ? Math.round((finishedMatchesCount / totalMatches) * 100) : 0;
     
     const getStatusInfo = () => {
       const effStatus = (round.status === 'open' && timedClosed) ? 'closed' : round.status;
@@ -3226,9 +3230,22 @@ const UserPanel = ({ setView }) => {
                     {userCartelas.length} cartela(s)
                   </span>
                 )}
-                {(round.status === 'finished' || round.status === 'closed' || timedClosed) && totalPoints > 0 && (
+                {((round.status === 'finished') || ((round.status === 'closed' || timedClosed) && hasAnyFinished)) && (
                   <span className="bg-green-600 text-white px-3 py-1 rounded-full text-xs font-bold">
                     {totalPoints} pontos total
+                  </span>
+                )}
+                {(round.status === 'closed' || timedClosed) && hasAnyFinished && (
+                  <span className="bg-indigo-100 text-indigo-700 px-3 py-1 rounded-full text-xs font-medium">
+                    Parcial
+                  </span>
+                )}
+                {(round.status === 'finished' || round.status === 'closed' || timedClosed) && totalMatches > 0 && (
+                  <span className="flex items-center gap-2 ml-2">
+                    <span className="w-28 h-2 bg-gray-200 rounded-full overflow-hidden">
+                      <span className="block h-2 bg-green-600" style={{ width: `${progressPercent}%` }} />
+                    </span>
+                    <span className="text-xs text-gray-600">{finishedMatchesCount}/{totalMatches}</span>
                   </span>
                 )}
                 {canPredictNoExisting && (
@@ -3296,7 +3313,7 @@ const UserPanel = ({ setView }) => {
                             <span className={`px-3 py-1 rounded-full text-xs font-medium ${cartela.paid ? 'bg-green-600 text-white' : 'bg-orange-100 text-orange-700'}`}>
                               {cartela.paid ? '💰 Pago' : '⚠️ Pendente'}
                             </span>
-                            {(round.status === 'finished' || round.status === 'closed' || timedClosed) && (
+                            {((round.status === 'finished') || ((round.status === 'closed' || timedClosed) && hasAnyFinished)) && (
                               <span className="bg-green-600 text-white px-3 py-1 rounded-full text-xs font-bold">
                                 {cartelaPoints} pontos
                               </span>
