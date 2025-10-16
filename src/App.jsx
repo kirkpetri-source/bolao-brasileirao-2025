@@ -1933,6 +1933,8 @@ const AdminPanel = ({ setView }) => {
   };
 
   const openRounds = rounds.filter(r => r.status === 'open' && !isRoundTimedClosed(r));
+  // Rodadas disponíveis para palpites: abertas ou futuras, desde que não fechadas pelo cronograma
+  const predictableRounds = rounds.filter(r => (r.status === 'open' || r.status === 'upcoming') && !isRoundTimedClosed(r));
   const closedRounds = rounds.filter(r => r.status === 'closed' || (r.status === 'open' && isRoundTimedClosed(r)));
   const finishedRounds = rounds.filter(r => r.status === 'finished');
   const upcomingRounds = rounds.filter(r => r.status === 'upcoming');
@@ -2968,11 +2970,43 @@ const UserPanel = ({ setView }) => {
     setExpandedRounds(prev => ({ ...prev, [roundId]: !prev[roundId] }));
   };
 
+  // Helper local para fechar rodada por horário, compartilhando a mesma regra do Admin
+  const isRoundTimedClosed = (round) => {
+    if (!round?.closeAt) return false;
+    const ts = new Date(round.closeAt).getTime();
+    return !isNaN(ts) && Date.now() >= ts;
+  };
+
+  // Helper local de formatação de data/hora (pt-BR)
+  const formatDateTime = (value) => {
+    if (!value) return null;
+    const dt = new Date(value);
+    if (isNaN(dt.getTime())) return null;
+    return dt.toLocaleString('pt-BR', { dateStyle: 'short', timeStyle: 'short' });
+  };
+
   const openRounds = rounds.filter(r => r.status === 'open' && !isRoundTimedClosed(r));
   const closedRounds = rounds.filter(r => r.status === 'closed' || (r.status === 'open' && isRoundTimedClosed(r))).sort((a, b) => b.number - a.number);
   const finishedRounds = rounds.filter(r => r.status === 'finished').sort((a, b) => b.number - a.number);
   const rankableRounds = rounds.filter(r => r.status === 'finished' || r.status === 'closed').sort((a, b) => b.number - a.number);
   const upcomingRounds = rounds.filter(r => r.status === 'upcoming').sort((a, b) => a.number - b.number);
+  const predictableRounds = rounds.filter(r => (r.status === 'open' || r.status === 'upcoming') && !isRoundTimedClosed(r));
+
+  // Minhas rodadas: apenas as que o usuário está participando
+  const myRoundIds = new Set(
+    predictions
+      .filter(p => p.userId === currentUser.id)
+      .map(p => p.roundId)
+  );
+  const myOpenOrUpcomingRounds = rounds
+    .filter(r => myRoundIds.has(r.id) && (r.status === 'open' || r.status === 'upcoming') && !isRoundTimedClosed(r))
+    .sort((a, b) => a.number - b.number);
+  const myClosedRounds = rounds
+    .filter(r => myRoundIds.has(r.id) && (r.status === 'closed' || (r.status === 'open' && isRoundTimedClosed(r))))
+    .sort((a, b) => b.number - a.number);
+  const myFinishedRounds = rounds
+    .filter(r => myRoundIds.has(r.id) && r.status === 'finished')
+    .sort((a, b) => b.number - a.number);
 
   useEffect(() => {
     if (!selectedRankingRound && rankableRounds.length > 0) {
@@ -3118,6 +3152,9 @@ const UserPanel = ({ setView }) => {
     const hasPredictions = userCartelas.length > 0;
     const points = calculateRoundPoints(round.id);
     const timedClosed = isRoundTimedClosed(round);
+    const isOpenOrUpcoming = round.status === 'open' || round.status === 'upcoming';
+    const canPredictNoExisting = isOpenOrUpcoming && !timedClosed && !hasPredictions;
+    const isTimedClosedOpenOrUpcoming = isOpenOrUpcoming && timedClosed;
     
     const getStatusInfo = () => {
       const effStatus = (round.status === 'open' && timedClosed) ? 'closed' : round.status;
@@ -3169,12 +3206,12 @@ const UserPanel = ({ setView }) => {
                     {totalPoints} pontos total
                   </span>
                 )}
-                {((round.status === 'open' && !timedClosed) && !hasPredictions) && (
+                {canPredictNoExisting && (
                   <span className="bg-red-100 text-red-700 px-3 py-1 rounded-full text-xs font-medium">
                     Sem palpites
                   </span>
                 )}
-                {(round.status === 'open' && timedClosed) && (
+                {isTimedClosedOpenOrUpcoming && (
                   <span className="bg-yellow-100 text-yellow-700 px-3 py-1 rounded-full text-xs font-medium">
                     Fechada automaticamente
                   </span>
@@ -3190,14 +3227,7 @@ const UserPanel = ({ setView }) => {
 
         {isExpanded && (
           <div className="border-t bg-gray-50 p-6">
-            {round.status === 'upcoming' && (
-              <div className="text-center py-8">
-                <Calendar className="mx-auto text-gray-400 mb-3" size={48} />
-                <p className="text-gray-600 font-medium">Esta rodada ainda não foi aberta para palpites</p>
-              </div>
-            )}
-
-            {(round.status === 'open' && !timedClosed) && !hasPredictions && (
+            {canPredictNoExisting && (
               <div className="text-center py-8">
                 <Target className="mx-auto text-orange-500 mb-3" size={48} />
                 <p className="text-gray-800 font-bold mb-2">Você ainda não fez seus palpites!</p>
@@ -3209,7 +3239,7 @@ const UserPanel = ({ setView }) => {
                 </button>
               </div>
             )}
-            {(round.status === 'open' && timedClosed) && (
+            {isTimedClosedOpenOrUpcoming && (
               <div className="text-center py-8">
                 <AlertCircle className="mx-auto text-yellow-600 mb-3" size={48} />
                 <p className="text-gray-800 font-bold">Rodada fechada automaticamente para palpites.</p>
@@ -3362,14 +3392,28 @@ const UserPanel = ({ setView }) => {
         alert('Rodada fechada para palpites pelo cronograma definido.');
         return;
       }
+      if (!Array.isArray(round.matches) || round.matches.length === 0) {
+        alert('Rodada sem jogos configurados. Aguarde o administrador adicionar os confrontos.');
+        return;
+      }
       const allPreds = round.matches.map(match => ({
         match,
         homeScore: localPreds[match.id]?.home !== undefined ? parseInt(localPreds[match.id].home) : null,
         awayScore: localPreds[match.id]?.away !== undefined ? parseInt(localPreds[match.id].away) : null
       }));
 
-      if (allPreds.filter(p => p.homeScore === null || p.awayScore === null).length > 0) {
+      // Validar preenchimento e faixas válidas (apenas inteiros entre 0 e 20)
+      const hasEmpty = allPreds.some(p => p.homeScore === null || p.awayScore === null);
+      if (hasEmpty) {
         alert('Preencha todos os palpites!');
+        return;
+      }
+      const invalidValues = allPreds.some(p => {
+        const hs = p.homeScore; const as = p.awayScore;
+        return !Number.isInteger(hs) || !Number.isInteger(as) || hs < 0 || as < 0 || hs > 20 || as > 20;
+      });
+      if (invalidValues) {
+        alert('Insira pontuações válidas (0–20) inteiras em todos os jogos.');
         return;
       }
 
@@ -3590,6 +3634,27 @@ const UserPanel = ({ setView }) => {
     if (!pendingPredictions) return;
     try {
       const { round, predictions: preds, cartelaCode, establishmentId } = pendingPredictions;
+      // Checagem adicional antes de salvar
+      if (isRoundTimedClosed(round)) {
+        alert('Rodada fechada para palpites pelo cronograma definido.');
+        return;
+      }
+      if (!Array.isArray(round.matches) || round.matches.length === 0) {
+        alert('Rodada sem jogos configurados. Aguarde o administrador adicionar os confrontos.');
+        return;
+      }
+      if (preds.length !== round.matches.length) {
+        alert('Palpites incompletos. Revise e preencha todos os jogos.');
+        return;
+      }
+      const invalidValues = preds.some(p => {
+        const hs = p.homeScore; const as = p.awayScore;
+        return !Number.isInteger(hs) || !Number.isInteger(as) || hs < 0 || as < 0 || hs > 20 || as > 20;
+      });
+      if (invalidValues) {
+        alert('Insira pontuações válidas (0–20) inteiras em todos os jogos.');
+        return;
+      }
       
       for (const pred of preds) {
         await addPrediction({
@@ -3807,14 +3872,14 @@ const UserPanel = ({ setView }) => {
           <div>
             <h2 className="text-2xl font-bold mb-2">Rodadas Disponíveis</h2>
             <p className="text-gray-600 mb-6">Escolha uma rodada e faça seus palpites • R$ {settings?.betValue?.toFixed(2) || '15,00'} por participação</p>
-            {openRounds.length === 0 ? (
+            {predictableRounds.length === 0 ? (
               <div className="bg-white rounded-xl p-12 text-center border-2 border-dashed">
                 <Calendar className="mx-auto text-gray-400 mb-4" size={48} />
                 <h3 className="text-xl font-semibold mb-2">Nenhuma rodada disponível</h3>
               </div>
             ) : (
               <div className="grid gap-4">
-                {openRounds.map((round) => {
+                {predictableRounds.map((round) => {
                   const userCartelas = getUserCartelasForRound(round.id);
                   
                   return (
@@ -4088,69 +4153,55 @@ const UserPanel = ({ setView }) => {
 
         {activeTab === 'history' && (
           <div>
-            <h2 className="text-2xl font-bold mb-2">Todas as Rodadas</h2>
-            <p className="text-gray-600 mb-6">Acompanhe seus palpites, resultados e pontuação</p>
-            
-            {rounds.length === 0 ? (
+            <h2 className="text-2xl font-bold mb-2">Minhas Rodadas</h2>
+            <p className="text-gray-600 mb-6">Veja apenas as rodadas em que você já participa</p>
+
+            {myOpenOrUpcomingRounds.length === 0 && myClosedRounds.length === 0 && myFinishedRounds.length === 0 ? (
               <div className="bg-white rounded-xl p-12 text-center border-2 border-dashed">
                 <Calendar className="mx-auto text-gray-400 mb-4" size={48} />
-                <h3 className="text-xl font-semibold mb-2">Nenhuma rodada criada</h3>
-                <p className="text-gray-500">Aguarde o administrador criar as rodadas</p>
+                <h3 className="text-xl font-semibold mb-2">Você ainda não participa de nenhuma rodada</h3>
+                <p className="text-gray-500">Vá em "Rodadas Disponíveis" para entrar em uma rodada</p>
               </div>
             ) : (
               <div className="space-y-8">
-                {openRounds.length > 0 && (
+                {myOpenOrUpcomingRounds.length > 0 && (
                   <div>
                     <h3 className="text-lg font-semibold mb-3 flex items-center gap-2">
                       <span className="bg-green-100 text-green-700 px-3 py-1 rounded-full text-sm">
-                        {openRounds.length}
+                        {myOpenOrUpcomingRounds.length}
                       </span>
-                      Rodadas Abertas para Palpites
+                      Rodadas Ativas
                     </h3>
                     <div className="space-y-3">
-                      {openRounds.map(round => <RoundAccordion key={round.id} round={round} />)}
+                      {myOpenOrUpcomingRounds.map(round => <RoundAccordion key={round.id} round={round} />)}
                     </div>
                   </div>
                 )}
 
-                {closedRounds.length > 0 && (
+                {myClosedRounds.length > 0 && (
                   <div>
                     <h3 className="text-lg font-semibold mb-3 flex items-center gap-2">
                       <span className="bg-yellow-100 text-yellow-700 px-3 py-1 rounded-full text-sm">
-                        {closedRounds.length}
+                        {myClosedRounds.length}
                       </span>
                       Rodadas Aguardando Resultados
                     </h3>
                     <div className="space-y-3">
-                      {closedRounds.map(round => <RoundAccordion key={round.id} round={round} />)}
+                      {myClosedRounds.map(round => <RoundAccordion key={round.id} round={round} />)}
                     </div>
                   </div>
                 )}
 
-                {finishedRounds.length > 0 && (
+                {myFinishedRounds.length > 0 && (
                   <div>
                     <h3 className="text-lg font-semibold mb-3 flex items-center gap-2">
                       <span className="bg-purple-100 text-purple-700 px-3 py-1 rounded-full text-sm">
-                        {finishedRounds.length}
+                        {myFinishedRounds.length}
                       </span>
                       Rodadas Finalizadas
                     </h3>
                     <div className="space-y-3">
-                      {finishedRounds.map(round => <RoundAccordion key={round.id} round={round} />)}
-                    </div>
-                  </div>
-                )}
-
-                {upcomingRounds.length > 0 && (
-                  <div>
-                    <h3 className="text-lg font-semibold mb-3 flex items-center gap-2">
-                      <span className="bg-gray-100 text-gray-700 px-3 py-1 rounded-full text-sm">
-                        {upcomingRounds.length}
-                      </span>
-                      Próximas Rodadas
-                    </h3>
-                    <div className="space-y-3">
-                      {upcomingRounds.map(round => <RoundAccordion key={round.id} round={round} />)}
+                      {myFinishedRounds.map(round => <RoundAccordion key={round.id} round={round} />)}
                     </div>
                   </div>
                 )}
