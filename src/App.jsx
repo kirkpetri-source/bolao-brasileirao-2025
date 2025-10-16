@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef, createContext, useContext } from 'react';
-import { Trophy, Users, Calendar, TrendingUp, LogOut, Eye, EyeOff, Plus, Edit2, Trash2, Upload, ExternalLink, X, UserPlus, Target, Award, ChevronDown, ChevronUp, Check, Key, DollarSign, CheckCircle, XCircle, AlertCircle, FileText, Download, Store, Filter } from 'lucide-react';
+import { Trophy, Users, Calendar, TrendingUp, LogOut, Eye, EyeOff, Plus, Edit2, Trash2, Upload, ExternalLink, X, UserPlus, Target, Award, ChevronDown, ChevronUp, Check, Key, DollarSign, CheckCircle, XCircle, AlertCircle, FileText, Download, Store, Filter, Loader2 } from 'lucide-react';
 import { initializeApp } from 'firebase/app';
 import { getFirestore, collection, addDoc, updateDoc, deleteDoc, doc, getDocs, getDoc, onSnapshot, serverTimestamp, query, where } from 'firebase/firestore';
 import bcrypt from 'bcryptjs';
@@ -1072,6 +1072,7 @@ const AdminPanel = ({ setView }) => {
   const [establishmentFilter, setEstablishmentFilter] = useState('all');
   const [whatsappMessage, setWhatsappMessage] = useState(settings?.whatsappMessage || '');
   const [betValue, setBetValue] = useState(settings?.betValue || 15);
+  const [pdfLoadingRoundId, setPdfLoadingRoundId] = useState(null);
   // Valores padrão para regras, pontuação e desempate (usados se não houver conteúdo salvo)
   const initialBet = settings?.betValue != null ? settings.betValue : 15;
   const initialBetDisplay = Number(initialBet).toFixed(2).replace('.', ',');
@@ -1494,6 +1495,7 @@ const AdminPanel = ({ setView }) => {
 
   const generateRoundPDF = async (roundId) => {
     try {
+      setPdfLoadingRoundId(roundId);
       if (!window.jspdf) {
         const script = document.createElement('script');
         script.src = 'https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js';
@@ -1514,7 +1516,19 @@ const AdminPanel = ({ setView }) => {
         alert('⚠️ Nenhum participante com pagamento confirmado nesta rodada!');
         return;
       }
-      
+
+      // Índices para acesso O(1)
+      const usersById = new Map(users.map(u => [u.id, u]));
+      const teamsById = new Map(teams.map(t => [t.id, t]));
+      const predsByKey = new Map();
+      predictions.forEach(p => {
+        const key = `${p.userId}-${p.roundId}-${p.matchId}-${p.cartelaCode || 'ANTIGA'}`;
+        if (!predsByKey.has(key)) predsByKey.set(key, p);
+      });
+
+      // Metadados do documento
+      try { pdf.setProperties && pdf.setProperties({ title: `Bolão - ${round.name}`, subject: 'Cartelas confirmadas', author: 'Bolão Brasileirão 2025' }); } catch (_) {}
+
       // Título
       pdf.setFontSize(20);
       pdf.setFont(undefined, 'bold');
@@ -1544,7 +1558,7 @@ const AdminPanel = ({ setView }) => {
       
       // Para cada usuário
       Object.entries(userCartelas).forEach(([userId, cartelas]) => {
-        const user = users.find(u => u.id === userId);
+          const user = usersById.get(userId);
         if (!user) return;
         
         // Para cada cartela do usuário
@@ -1588,14 +1602,9 @@ const AdminPanel = ({ setView }) => {
               yPos = 20;
             }
             
-            const homeTeam = teams.find(t => t.id === match.homeTeamId);
-            const awayTeam = teams.find(t => t.id === match.awayTeamId);
-            const pred = predictions.find(p => 
-              p.userId === user.id && 
-              p.roundId === roundId && 
-              p.matchId === match.id &&
-              p.cartelaCode === participant.cartelaCode
-            );
+            const homeTeam = teamsById.get(match.homeTeamId);
+            const awayTeam = teamsById.get(match.awayTeamId);
+            const pred = predsByKey.get(`${user.id}-${roundId}-${match.id}-${participant.cartelaCode}`);
 
             if (pred) {
               pdf.setFontSize(9);
@@ -1623,11 +1632,14 @@ const AdminPanel = ({ setView }) => {
       }
 
       // Salvar PDF
-      pdf.save(`Bolao_${round.name.replace(/\s+/g, '_')}_CONFIRMADOS_${new Date().getTime()}.pdf`);
+      const safeRound = (round.name || 'Rodada').replace(/[^\w]+/g, '_');
+      pdf.save(`Bolao_${safeRound}_CONFIRMADOS_${new Date().getTime()}.pdf`);
       alert(`✅ PDF gerado com sucesso!\n\n📄 ${paidParticipants.length} cartelas confirmadas\n👥 ${Object.keys(userCartelas).length} participantes únicos`);
     } catch (error) {
       console.error('Erro ao gerar PDF:', error);
       alert('❌ Erro ao gerar PDF: ' + error.message);
+    } finally {
+      setPdfLoadingRoundId(null);
     }
   };
 
@@ -1960,8 +1972,19 @@ const AdminPanel = ({ setView }) => {
               {round.status === 'open' && <button onClick={() => changeStatus(round.id, 'closed')} className="px-3 py-2 bg-yellow-100 text-yellow-700 rounded-lg text-sm">Fechar</button>}
               {round.status === 'closed' && <button onClick={() => changeStatus(round.id, 'finished')} className="px-3 py-2 bg-blue-100 text-blue-700 rounded-lg text-sm">Finalizar</button>}
               {(round.status === 'closed' || round.status === 'finished') && (
-                <button onClick={() => generateRoundPDF(round.id)} className="p-2 bg-purple-100 text-purple-700 rounded-lg hover:bg-purple-200" title="Gerar PDF">
-                  <Download size={18} />
+                <button
+                  onClick={() => generateRoundPDF(round.id)}
+                  className={`p-2 rounded-lg ${pdfLoadingRoundId === round.id ? 'bg-purple-100 text-purple-400 opacity-60 cursor-not-allowed' : 'bg-purple-100 text-purple-700 hover:bg-purple-200'}`}
+                  title="Gerar PDF"
+                  aria-label="Gerar PDF"
+                  aria-busy={pdfLoadingRoundId === round.id}
+                  disabled={pdfLoadingRoundId === round.id}
+                >
+                  {pdfLoadingRoundId === round.id ? (
+                    <Loader2 size={18} className="animate-spin" />
+                  ) : (
+                    <Download size={18} />
+                  )}
                 </button>
               )}
               <button onClick={() => { setEditingRound(round); setShowRoundForm(true); }} className="p-2 bg-blue-100 text-blue-700 rounded-lg"><Edit2 size={18} /></button>
@@ -3040,7 +3063,9 @@ const UserPanel = ({ setView }) => {
 
   const calculateRoundPoints = (roundId) => {
     const round = rounds.find(r => r.id === roundId);
-    if (!round || round.status !== 'finished') return null;
+    if (!round) return null;
+    const canScore = round.status === 'finished' || round.status === 'closed' || isRoundTimedClosed(round);
+    if (!canScore) return null;
     
     const cartelas = getUserCartelasForRound(roundId);
     const cartelaPoints = {};
@@ -3201,7 +3226,7 @@ const UserPanel = ({ setView }) => {
                     {userCartelas.length} cartela(s)
                   </span>
                 )}
-                {round.status === 'finished' && totalPoints > 0 && (
+                {(round.status === 'finished' || round.status === 'closed' || timedClosed) && totalPoints > 0 && (
                   <span className="bg-green-600 text-white px-3 py-1 rounded-full text-xs font-bold">
                     {totalPoints} pontos total
                   </span>
@@ -3271,7 +3296,7 @@ const UserPanel = ({ setView }) => {
                             <span className={`px-3 py-1 rounded-full text-xs font-medium ${cartela.paid ? 'bg-green-600 text-white' : 'bg-orange-100 text-orange-700'}`}>
                               {cartela.paid ? '💰 Pago' : '⚠️ Pendente'}
                             </span>
-                            {round.status === 'finished' && (
+                            {(round.status === 'finished' || round.status === 'closed' || timedClosed) && (
                               <span className="bg-green-600 text-white px-3 py-1 rounded-full text-xs font-bold">
                                 {cartelaPoints} pontos
                               </span>
@@ -3287,7 +3312,7 @@ const UserPanel = ({ setView }) => {
                           const pred = cartela.predictions.find(p => p.matchId === match.id);
 
                           let matchPoints = null;
-                          if (round.status === 'finished' && match.finished && pred && cartela.paid) {
+                          if ((round.status === 'finished' || round.status === 'closed' || timedClosed) && match.finished && pred && cartela.paid) {
                             if (pred.homeScore === match.homeScore && pred.awayScore === match.awayScore) {
                               matchPoints = 3;
                             } else {
