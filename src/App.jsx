@@ -1177,9 +1177,9 @@ const AdminPanel = ({ setView }) => {
 
   useEffect(() => {
     if (!selectedDashboardRound) {
-      const finishedRounds = rounds.filter(r => r.status === 'finished').sort((a, b) => b.number - a.number);
-      if (finishedRounds.length > 0) {
-        setSelectedDashboardRound(finishedRounds[0].id);
+      const rankable = rounds.filter(r => r.status === 'finished' || r.status === 'closed').sort((a, b) => b.number - a.number);
+      if (rankable.length > 0) {
+        setSelectedDashboardRound(rankable[0].id);
       }
     }
   }, [rounds]);
@@ -1364,7 +1364,7 @@ const AdminPanel = ({ setView }) => {
     if (!roundId) return null;
     
     const round = rounds.find(r => r.id === roundId);
-    if (!round || round.status !== 'finished') return null;
+    if (!round || (round.status !== 'finished' && round.status !== 'closed')) return null;
 
     const betValue = settings?.betValue || 15;
     const participants = getRoundParticipants(roundId);
@@ -1393,9 +1393,13 @@ const AdminPanel = ({ setView }) => {
       };
     }).filter(Boolean).sort((a, b) => b.points - a.points);
 
-    const maxPoints = ranking.length > 0 ? ranking[0].points : 0;
-    const winners = ranking.filter(r => r.points === maxPoints);
-    const prizePerWinner = winners.length > 0 ? prizePool / winners.length : 0;
+    let winners = [];
+    let prizePerWinner = 0;
+    if (round.status === 'finished') {
+      const maxPoints = ranking.length > 0 ? ranking[0].points : 0;
+      winners = ranking.filter(r => r.points === maxPoints);
+      prizePerWinner = winners.length > 0 ? prizePool / winners.length : 0;
+    }
 
     return {
       round,
@@ -2043,14 +2047,17 @@ const AdminPanel = ({ setView }) => {
                   onChange={(e) => setSelectedDashboardRound(e.target.value)}
                   className="w-full px-4 py-2 border rounded-lg bg-white"
                 >
-                  {rounds.filter(r => r.status === 'finished').length === 0 && (
-                    <option value="">Nenhuma rodada finalizada</option>
+                  {rounds.filter(r => r.status === 'finished' || r.status === 'closed').length === 0 && (
+                    <option value="">Nenhuma rodada fechada ou finalizada</option>
                   )}
-                  {rounds.filter(r => r.status === 'finished').sort((a, b) => b.number - a.number).map(round => (
-                    <option key={round.id} value={round.id}>
-                      {round.name}
-                    </option>
-                  ))}
+                  {rounds
+                    .filter(r => r.status === 'finished' || r.status === 'closed')
+                    .sort((a, b) => b.number - a.number)
+                    .map(round => (
+                      <option key={round.id} value={round.id}>
+                        {round.name} {round.status === 'closed' ? '• Parcial' : ''}
+                      </option>
+                    ))}
                 </select>
               </div>
             </div>
@@ -2062,8 +2069,8 @@ const AdminPanel = ({ setView }) => {
                 return (
                   <div className="bg-white rounded-xl p-12 text-center border-2 border-dashed">
                     <Trophy className="mx-auto text-gray-400 mb-4" size={48} />
-                    <h3 className="text-xl font-semibold mb-2">Nenhuma rodada finalizada</h3>
-                    <p className="text-gray-500">O dashboard será exibido após a finalização da primeira rodada</p>
+                    <h3 className="text-xl font-semibold mb-2">Nenhuma rodada fechada ou finalizada</h3>
+                    <p className="text-gray-500">O dashboard aparece para rodadas fechadas (parcial) e finalizadas (final)</p>
                   </div>
                 );
               }
@@ -2097,13 +2104,18 @@ const AdminPanel = ({ setView }) => {
                     </div>
 
                     <div className="bg-green-50 border-2 border-green-200 rounded-xl p-6">
-                      <div className="flex items-center justify-between mb-3">
-                        <Trophy className="text-green-500" size={32} />
-                      </div>
-                      <p className="text-green-600 text-sm font-medium mb-1">Premiação (85%)</p>
-                      <p className="text-3xl font-bold text-green-900">R$ {dashboardData.prizePool.toFixed(2)}</p>
-                      <p className="text-xs text-green-600 mt-1">Para {dashboardData.winners.length} vencedor(es)</p>
+                    <div className="flex items-center justify-between mb-3">
+                      <Trophy className="text-green-500" size={32} />
                     </div>
+                    <p className="text-green-600 text-sm font-medium mb-1">Premiação (85%)</p>
+                    <p className="text-3xl font-bold text-green-900">R$ {dashboardData.prizePool.toFixed(2)}</p>
+                    {dashboardData.round.status === 'finished' && (
+                      <p className="text-xs text-green-600 mt-1">Para {dashboardData.winners.length} vencedor(es)</p>
+                    )}
+                    {dashboardData.round.status === 'closed' && (
+                      <p className="text-xs text-green-600 mt-1">Definida na finalização da rodada</p>
+                    )}
+                  </div>
 
                     <div className="bg-purple-50 border-2 border-purple-200 rounded-xl p-6">
                       <div className="flex items-center justify-between mb-3">
@@ -2173,7 +2185,8 @@ const AdminPanel = ({ setView }) => {
                     </div>
                   )}
 
-                  {/* Vencedores / Premiação */}
+                  {/* Vencedores / Premiação (apenas quando finalizada) */}
+                  {dashboardData.round.status === 'finished' && (
                   <div className="bg-gradient-to-br from-yellow-400 via-yellow-500 to-orange-500 rounded-xl p-8 text-white">
                     <div className="flex items-center gap-3 mb-6">
                       <Trophy size={48} />
@@ -2233,11 +2246,17 @@ const AdminPanel = ({ setView }) => {
                       </div>
                     )}
                   </div>
+                  )}
 
                   {/* Ranking Completo da Rodada */}
                   <div className="bg-white rounded-xl shadow-sm border overflow-hidden">
                     <div className="bg-gray-50 p-4 border-b">
-                      <h3 className="text-lg font-bold">Ranking Completo</h3>
+                      <div className="flex items-center justify-between">
+                        <h3 className="text-lg font-bold">Ranking Completo</h3>
+                        {dashboardData.round.status === 'closed' && (
+                          <span className="text-xs font-medium text-yellow-600">Resultados parciais (rodada fechada)</span>
+                        )}
+                      </div>
                     </div>
                     <div className="overflow-x-auto">
                       <table className="w-full">
