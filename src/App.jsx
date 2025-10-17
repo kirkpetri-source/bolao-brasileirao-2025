@@ -3,6 +3,7 @@ import { Trophy, Users, Calendar, TrendingUp, LogOut, Eye, EyeOff, Plus, Edit2, 
 import { initializeApp } from 'firebase/app';
 import { getFirestore, collection, addDoc, updateDoc, deleteDoc, doc, getDocs, getDoc, onSnapshot, serverTimestamp, query, where } from 'firebase/firestore';
 import bcrypt from 'bcryptjs';
+import { jsPDF } from 'jspdf';
 
 const firebaseConfig = {
   apiKey: "AIzaSyAZkL5Q4g1tAAVIZP4mhL6EyjLywjmyfX4",
@@ -1496,16 +1497,12 @@ const AdminPanel = ({ setView }) => {
   const generateRoundPDF = async (roundId) => {
     try {
       setPdfLoadingRoundId(roundId);
-      if (!window.jspdf) {
-        const script = document.createElement('script');
-        script.src = 'https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js';
-        document.head.appendChild(script);
-        await new Promise((resolve) => {
-          script.onload = resolve;
-        });
-      }
-      const { jsPDF } = window.jspdf;
-      const pdf = new jsPDF();
+      const pdf = new jsPDF('p', 'mm', 'a4');
+      const pageWidth = pdf.internal.pageSize.getWidth();
+      const pageHeight = pdf.internal.pageSize.getHeight();
+      const margin = 15;
+      const contentWidth = pageWidth - margin * 2;
+
       const round = rounds.find(r => r.id === roundId);
       if (!round) return;
 
@@ -1526,98 +1523,166 @@ const AdminPanel = ({ setView }) => {
         if (!predsByKey.has(key)) predsByKey.set(key, p);
       });
 
-      // Metadados do documento
+      // Paleta e helpers de layout
+      const primary = [22, 163, 74]; // verde
+      const primaryDark = [16, 122, 56];
+      const gray700 = [55, 65, 81];
+      const lightBg = [248, 250, 252];
+      const border = [229, 231, 235];
+
+      // Metadados
       try { pdf.setProperties && pdf.setProperties({ title: `Bolão - ${round.name}`, subject: 'Cartelas confirmadas', author: 'Bolão Brasileirão 2025' }); } catch (_) {}
 
-      // Título
-      pdf.setFontSize(20);
-      pdf.setFont(undefined, 'bold');
-      pdf.text('BOLÃO BRASILEIRÃO 2025', 105, 20, { align: 'center' });
-      
-      pdf.setFontSize(16);
-      pdf.text(round.name, 105, 30, { align: 'center' });
-      
-      pdf.setFontSize(10);
-      pdf.setFont(undefined, 'normal');
-      pdf.text(`Relatório gerado em: ${new Date().toLocaleString('pt-BR')}`, 105, 38, { align: 'center' });
-      pdf.text(`Total de cartelas confirmadas (pagas): ${paidParticipants.length}`, 105, 44, { align: 'center' });
-      
-      let yPos = 55;
-      
+      const drawPageHeader = () => {
+        pdf.setFillColor(...primary);
+        pdf.rect(0, 0, pageWidth, 24, 'F');
+        pdf.setTextColor(255, 255, 255);
+        pdf.setFontSize(14);
+        pdf.setFont(undefined, 'bold');
+        pdf.text('BOLÃO BRASILEIRÃO 2025', margin, 10);
+        pdf.setFontSize(11);
+        pdf.text(round.name, margin, 18);
+        pdf.setFontSize(9);
+        pdf.setFont(undefined, 'normal');
+        pdf.text(`Gerado em: ${new Date().toLocaleString('pt-BR')}`, pageWidth - margin, 10, { align: 'right' });
+        pdf.setTextColor(0, 0, 0);
+        return 30; // y inicial do conteúdo
+      };
+
+      const drawSummaryCards = (y) => {
+        const gap = 6;
+        const cardW = (contentWidth - gap * 2) / 3;
+        const cardH = 18;
+        const cards = [
+          { title: 'Cartelas pagas', value: paidParticipants.length },
+          { title: 'Participantes únicos', value: [...new Set(paidParticipants.map(p => p.userId))].length },
+          { title: 'Estabelecimentos', value: [...new Set(paidParticipants.map(p => p.establishmentId))].length || 0 },
+        ];
+        let x = margin;
+        cards.forEach(c => {
+          pdf.setFillColor(...lightBg);
+          pdf.setDrawColor(...border);
+          pdf.roundedRect(x, y, cardW, cardH, 2, 2, 'FD');
+          pdf.setFontSize(8);
+          pdf.setTextColor(...gray700);
+          pdf.text(c.title, x + 6, y + 7);
+          pdf.setFont(undefined, 'bold');
+          pdf.setFontSize(12);
+          pdf.setTextColor(0, 0, 0);
+          pdf.text(String(c.value), x + 6, y + 14);
+          pdf.setFont(undefined, 'normal');
+          x += cardW + gap;
+        });
+        return y + cardH + 8;
+      };
+
+      let y = drawPageHeader();
+      y = drawSummaryCards(y);
+
       // Agrupar cartelas por usuário
       const userCartelas = {};
       paidParticipants.forEach(participant => {
         const userId = participant.userId;
-        if (!userCartelas[userId]) {
-          userCartelas[userId] = [];
-        }
+        if (!userCartelas[userId]) userCartelas[userId] = [];
         userCartelas[userId].push(participant);
       });
-      
+
+      const ensureSpace = (needed) => {
+        if (y + needed > pageHeight - 18) {
+          pdf.addPage();
+          y = drawPageHeader();
+        }
+      };
+
       let participantIndex = 0;
-      
+      const matches = round.matches || [];
+      const rowH = 6;
+
       // Para cada usuário
       Object.entries(userCartelas).forEach(([userId, cartelas]) => {
-          const user = usersById.get(userId);
+        const user = usersById.get(userId);
         if (!user) return;
         
-        // Para cada cartela do usuário
         cartelas.forEach((participant) => {
           participantIndex++;
-          
-          if (yPos > 240) {
-            pdf.addPage();
-            yPos = 20;
-          }
 
+          const rowsPerCol = Math.ceil((matches?.length || 0) / 2) || 0;
+          // Limites da coluna esquerda (dados do participante)
+          const leftTextX = margin + 8;
+          const leftColRight = margin + contentWidth / 2 - 8;
+          const leftTextMaxW = leftColRight - leftTextX;
+
+          // Quebra de linha para evitar invasão da coluna direita
           const establishment = establishments.find(e => e.id === participant.establishmentId);
-          
-          // Cabeçalho do participante
+          const estText = establishment ? `Estabelecimento: ${establishment.name}` : '';
+          const estLines = estText ? (pdf.splitTextToSize ? pdf.splitTextToSize(estText, leftTextMaxW) : [estText]) : [];
+
+          // Altura dinâmica do cabeçalho para não sobrepor palpites
+          const lineSpacing = 6;
+          const headerH = 24 + lineSpacing * estLines.length;
+          const innerPad = 10;
+          const tableH = rowsPerCol * rowH;
+          const cardH = headerH + tableH + innerPad;
+
+          ensureSpace(cardH + 8);
+
+          // Cartão do participante
+          pdf.setFillColor(...lightBg);
+          pdf.setDrawColor(...border);
+          pdf.roundedRect(margin, y, contentWidth, cardH, 3, 3, 'FD');
+
+          // Cabeçalho
           pdf.setFontSize(12);
           pdf.setFont(undefined, 'bold');
-          pdf.text(`${participantIndex}. ${user.name}`, 20, yPos);
-          
+          pdf.text(`${participantIndex}. ${user.name}`, margin + 8, y + 8);
+
+          // Bloco de informações (com largura limitada à metade esquerda)
           pdf.setFontSize(9);
           pdf.setFont(undefined, 'normal');
-          pdf.text(`WhatsApp: ${user.whatsapp}`, 20, yPos + 5);
-          pdf.text(`Cartela: ${participant.cartelaCode}`, 20, yPos + 10);
-          if (establishment) {
-            pdf.text(`Estabelecimento: ${establishment.name}`, 20, yPos + 15);
-            yPos += 5;
+          pdf.setTextColor(...gray700);
+          let infoY = y + 14;
+          pdf.text(`Cartela: ${participant.cartelaCode}`, leftTextX, infoY);
+          if (estLines.length) {
+            estLines.forEach((line) => {
+              infoY += lineSpacing;
+              pdf.text(line, leftTextX, infoY);
+            });
           }
-          
-          // Status PAGO
-          pdf.setTextColor(0, 128, 0);
+          pdf.setTextColor(0, 0, 0);
+
+          // Badge de status PAGO
+          const badgeW = 24, badgeH = 8;
+          const badgeX = margin + contentWidth - badgeW - 8;
+          const badgeY = y + 6;
+          pdf.setFillColor(...primary);
+          pdf.roundedRect(badgeX, badgeY, badgeW, badgeH, 2, 2, 'F');
+          pdf.setTextColor(255, 255, 255);
+          pdf.setFontSize(9);
           pdf.setFont(undefined, 'bold');
-          pdf.text('PAGO', 150, yPos + 5);
+          pdf.text('PAGO', badgeX + badgeW / 2, badgeY + badgeH / 2 + 0.5, { align: 'center' });
           pdf.setTextColor(0, 0, 0);
           pdf.setFont(undefined, 'normal');
-          
-          yPos += 22;
 
-          // Palpites desta cartela
-          round.matches?.forEach((match, mIndex) => {
-            if (yPos > 270) {
-              pdf.addPage();
-              yPos = 20;
-            }
-            
+          // Palpites em 2 colunas (começam abaixo do cabeçalho dinâmico)
+          const startPredY = y + headerH;
+          const col1X = margin + 10;
+          const col2X = margin + contentWidth / 2 + 6;
+          matches?.forEach((match, idx) => {
             const homeTeam = teamsById.get(match.homeTeamId);
             const awayTeam = teamsById.get(match.awayTeamId);
             const pred = predsByKey.get(`${user.id}-${roundId}-${match.id}-${participant.cartelaCode}`);
+            if (!pred) return;
 
-            if (pred) {
-              pdf.setFontSize(9);
-              const matchText = `  ${mIndex + 1}) ${homeTeam?.name} ${pred.homeScore} x ${pred.awayScore} ${awayTeam?.name}`;
-              pdf.text(matchText, 25, yPos);
-              yPos += 5;
-            }
+            const col = idx < rowsPerCol ? 1 : 2;
+            const row = idx % rowsPerCol;
+            const x = col === 1 ? col1X : col2X;
+            const yLine = startPredY + row * rowH;
+            pdf.setFontSize(9);
+            const matchText = `${idx + 1}) ${homeTeam?.name} ${pred.homeScore} x ${pred.awayScore} ${awayTeam?.name}`;
+            pdf.text(matchText, x, yLine);
           });
 
-          yPos += 3;
-          pdf.setDrawColor(200, 200, 200);
-          pdf.line(20, yPos, 190, yPos);
-          yPos += 8;
+          y += cardH + 8;
         });
       });
 
@@ -1627,8 +1692,8 @@ const AdminPanel = ({ setView }) => {
         pdf.setPage(i);
         pdf.setFontSize(8);
         pdf.setFont(undefined, 'normal');
-        pdf.setTextColor(0, 0, 0);
-        pdf.text(`Página ${i} de ${pageCount}`, 105, 290, { align: 'center' });
+        pdf.setTextColor(120, 120, 120);
+        pdf.text(`Página ${i} de ${pageCount}`, pageWidth / 2, pageHeight - 8, { align: 'center' });
       }
 
       // Salvar PDF
@@ -1655,23 +1720,11 @@ const AdminPanel = ({ setView }) => {
         return;
       }
 
-      // Carregar jsPDF via CDN se necessário
-      if (!window.jspdf) {
-        const script = document.createElement('script');
-        script.src = 'https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js';
-        document.head.appendChild(script);
-        await new Promise((resolve) => {
-          script.onload = resolve;
-        });
-      }
-
-      const { jsPDF } = window.jspdf;
       const pdf = new jsPDF('l', 'mm', 'a4');
       const pageWidth = pdf.internal.pageSize.getWidth();
       const pageHeight = pdf.internal.pageSize.getHeight();
-      const leftMargin = 20;
-      const rightMargin = 20;
-      const contentWidth = pageWidth - leftMargin - rightMargin;
+      const margin = 20;
+      const contentWidth = pageWidth - margin * 2;
 
       const round = rounds.find(r => r.id === roundId);
       const establishment = establishments.find(e => e.id === establishmentId);
@@ -1683,156 +1736,212 @@ const AdminPanel = ({ setView }) => {
       const paidParticipants = estParticipants.filter(p => p.paid);
       const pendingParticipants = estParticipants.filter(p => !p.paid);
 
-      // Resumo (parcial e global)
-      const totalExpected = estParticipants.length * betValue;
-      const totalReceived = paidParticipants.length * betValue;
-      const establishmentFee = paidParticipants.length * betValue * 0.05;
-
-      // Dados globais (para premiacao/admin iguais ao dashboard)
-      const summaryGlobal = getRoundFinancialSummary(roundId, establishmentId, true);
-
-      // Cabeçalho
-      pdf.setFontSize(18);
-      pdf.setFont(undefined, 'bold');
-      pdf.text('Controle Financeiro', leftMargin, 20);
-
-      pdf.setFontSize(12);
-      pdf.setFont(undefined, 'normal');
-      pdf.text(`Rodada: ${round?.name || '-'}`, leftMargin, 28);
-      pdf.text(`Estabelecimento: ${establishment?.name || '-'}`, leftMargin, 34);
-
-      // Totais: exibir APENAS o recebimento do estabelecimento (5%)
-      const boxY = 42;
-      const boxW = 60; // caixa um pouco mais larga em paisagem
-      const boxH = 26;
-      pdf.setFillColor(255, 235, 210); // laranja claro
-      pdf.setDrawColor(240, 180, 120); // borda laranja
-      pdf.roundedRect(leftMargin, boxY, boxW, boxH, 2, 2, 'FD');
-      pdf.setFontSize(9);
-      pdf.setFont(undefined, 'normal');
-      pdf.text('Estabelec. (5%)', leftMargin + 4, boxY + 8);
-      pdf.setFontSize(12);
-      pdf.setFont(undefined, 'bold');
-      pdf.text(`R$ ${establishmentFee.toFixed(2)}`, leftMargin + 4, boxY + 16);
-
-      // Barra de filtros (Todos | Pagos | Pendentes) + comissão do estabelecimento
-      const filterY = boxY + boxH + 12;
-
-      const drawPill = (x, y, text, fill, textColor) => {
-        const padding = 6;
-        const w = pdf.getTextWidth(text) + padding * 2;
-        const h = 9;
-        pdf.setFillColor(...fill);
-        pdf.roundedRect(x, y, w, h, 3, 3, 'F');
-        pdf.setTextColor(...textColor);
-        pdf.setFontSize(10);
-        pdf.setFont(undefined, 'bold');
-        pdf.text(text, x + padding, y + h / 2, { baseline: 'middle' });
-        pdf.setTextColor(0, 0, 0);
-      };
-
       const totalCount = estParticipants.length;
       const paidCount = paidParticipants.length;
       const pendingCount = pendingParticipants.length;
+      const establishmentFee = paidParticipants.length * betValue * 0.05;
 
-      // Desenhar os 3 filtros
-      let xPos = leftMargin;
-      drawPill(xPos, filterY, `Todos (${totalCount})`, [60, 60, 60], [255, 255, 255]);
-      xPos += pdf.getTextWidth(`Todos (${totalCount})`) + 18;
-      drawPill(xPos, filterY, `Pagos (${paidCount})`, [16, 185, 129], [255, 255, 255]);
-      xPos += pdf.getTextWidth(`Pagos (${paidCount})`) + 18;
-      drawPill(xPos, filterY, `Pendentes (${pendingCount})`, [239, 68, 68], [255, 255, 255]);
+      // Paleta
+      const primary = [22, 163, 74];
+      const gray700 = [55, 65, 81];
+      const lightBg = [248, 250, 252];
+      const border = [229, 231, 235];
+      const danger = [239, 68, 68];
+      const success = [16, 185, 129];
+      const orange = [251, 146, 60];
+      const orangeLight = [255, 237, 213];
 
-      // Comissão deste estabelecimento (pílula à direita)
-      const commissionText = `Comissão deste estabelecimento: R$ ${establishmentFee.toFixed(2)}`;
-      const wCommission = pdf.getTextWidth(commissionText) + 12;
-      const xCommission = leftMargin + contentWidth - wCommission; // alinhar à direita dentro das margens
-      pdf.setFillColor(255, 247, 237); // laranja muito claro
-      pdf.setDrawColor(252, 196, 120);
-      pdf.roundedRect(xCommission, filterY - 0.5, wCommission, 9, 3, 3, 'FD');
-      pdf.setTextColor(180, 83, 9);
-      pdf.setFontSize(10);
-      pdf.setFont(undefined, 'bold');
-      pdf.text(commissionText, xCommission + 6, filterY + 4.5, { baseline: 'middle' });
-      pdf.setTextColor(0, 0, 0);
-
-      // Tabela de participantes (Nome | Cartela | Valor | Status)
-      let y = filterY + 24; // iniciar abaixo da barra de filtros (mais espaço)
-      const colParticipanteX = leftMargin + 2;
-      const colCartelaX = leftMargin + Math.min(140, contentWidth * 0.54);
-      const colValorX = leftMargin + contentWidth - 45;
-      const colStatusX = leftMargin + contentWidth - 15;
-      const headerH = 10;
-      const rowH = 10;
-      const colValorW = 30;
-      const colStatusW = 22;
-      const colValorCenterX = colValorX + colValorW / 2;
-      const colStatusCenterX = colStatusX + colStatusW / 2;
-      pdf.setLineWidth(0.2);
-      const drawHeader = () => {
-        pdf.setFillColor(245, 245, 245);
-        pdf.rect(leftMargin, y, contentWidth, headerH, 'F');
-        pdf.setFontSize(10);
+      const drawPageHeader = () => {
+        pdf.setFillColor(...primary);
+        pdf.rect(0, 0, pageWidth, 24, 'F');
+        pdf.setTextColor(255, 255, 255);
+        pdf.setFontSize(14);
         pdf.setFont(undefined, 'bold');
-        pdf.text('Participante', colParticipanteX, y + headerH / 2, { baseline: 'middle' });
-        pdf.text('Cartela', colCartelaX, y + headerH / 2, { baseline: 'middle' });
-        pdf.text('Valor', colValorCenterX, y + headerH / 2, { baseline: 'middle', align: 'center' });
-        pdf.text('Status', colStatusCenterX, y + headerH / 2, { baseline: 'middle', align: 'center' });
-        y += headerH;
-      };
-
-      drawHeader();
-
-      const ensurePage = () => {
-        if (y > pageHeight - 25) {
-          pdf.addPage();
-          y = 20;
-          drawHeader();
-        }
-      };
-
-      estParticipants.forEach((p, idx) => {
-        ensurePage();
-        const user = users.find(u => u.id === p.userId);
-        const nome = user?.name || `Participante ${idx + 1}`;
-        const cartelaRaw = p.cartelaCode || 'ANTIGA';
-        const cartela = cartelaRaw.length > 20 ? `${cartelaRaw.slice(0, 20)}…` : cartelaRaw;
-        const status = p.paid ? 'Pago' : 'Não pago';
-        const statusColor = p.paid ? [0, 128, 0] : [200, 0, 0];
-
+        pdf.text('Controle Financeiro', margin, 10);
         pdf.setFontSize(10);
         pdf.setFont(undefined, 'normal');
-        const textY = y + rowH / 2;
-        pdf.text(nome, colParticipanteX, textY, { baseline: 'middle' });
-        pdf.text(cartela, colCartelaX, textY, { baseline: 'middle' });
-        pdf.text(`R$ ${betValue.toFixed(2)}`, colValorCenterX, textY, { baseline: 'middle', align: 'center' });
-        pdf.setTextColor(...statusColor);
-        pdf.text(status, colStatusCenterX, textY, { baseline: 'middle', align: 'center' });
+        const subtitle = `Rodada: ${round?.name || '-'}  •  Estabelecimento: ${establishment?.name || '-'}`;
+        pdf.text(subtitle, margin, 18);
         pdf.setTextColor(0, 0, 0);
-        y += rowH;
+        return 32;
+      };
 
-        pdf.setDrawColor(230, 230, 230);
-        pdf.line(leftMargin, y, leftMargin + contentWidth, y);
-        y += 2;
-      });
+      const drawCards = (y) => {
+        const gap = 8;
+        const cardW = (contentWidth - gap * 3) / 4;
+        const cardH = 20;
+        const cards = [
+          { title: 'Participantes', value: String(totalCount), fill: lightBg, stroke: border, text: [0,0,0] },
+          { title: 'Pagos', value: String(paidCount), fill: lightBg, stroke: border, text: [0,0,0] },
+          { title: 'Pendentes', value: String(pendingCount), fill: lightBg, stroke: border, text: [0,0,0] },
+          { title: 'Comissão (5%)', value: `R$ ${establishmentFee.toFixed(2)}`, fill: orangeLight, stroke: [252, 196, 120], text: [180, 83, 9] },
+        ];
+        let x = margin;
+        cards.forEach(c => {
+          pdf.setFillColor(...c.fill);
+          pdf.setDrawColor(...c.stroke);
+          pdf.roundedRect(x, y, cardW, cardH, 2, 2, 'FD');
+          pdf.setFontSize(8);
+          pdf.setTextColor(...gray700);
+          pdf.text(c.title, x + 6, y + 7);
+          pdf.setFont(undefined, 'bold');
+          pdf.setFontSize(12);
+          pdf.setTextColor(...c.text);
+          pdf.text(c.value, x + 6, y + 15);
+          pdf.setFont(undefined, 'normal');
+          pdf.setTextColor(0,0,0);
+          x += cardW + gap;
+        });
+        return y + cardH + 10;
+      };
 
-      // Lista de devedores
-      ensurePage();
-      pdf.setFontSize(12);
-      pdf.setFont(undefined, 'bold');
-      pdf.text('Devedores (Não pagos):', 20, y + 8);
-      y += 14;
-      pdf.setFontSize(10);
-      pdf.setFont(undefined, 'normal');
+      const drawBars = (y) => {
+        const boxH = 26;
+        pdf.setFillColor(...lightBg);
+        pdf.setDrawColor(...border);
+        pdf.roundedRect(margin, y, contentWidth, boxH, 2, 2, 'FD');
+        pdf.setFontSize(10);
+        pdf.setFont(undefined, 'bold');
+        pdf.setTextColor(...gray700);
+        pdf.text('Resumo visual', margin + 6, y + 8);
+        pdf.setTextColor(0,0,0);
 
-      if (pendingParticipants.length === 0) {
-        pdf.text('Nenhum devedor.', 20, y);
-      } else {
-        pendingParticipants.forEach(p => {
+        const startX = margin + 90;
+        const innerW = contentWidth - (startX - margin) - 10;
+        const scale = totalCount > 0 ? innerW / totalCount : 0;
+        const barH = 6;
+        const y1 = y + 12;
+        const y2 = y + 12 + barH + 4;
+
+        // Pago
+        pdf.setFontSize(9);
+        pdf.setTextColor(...gray700);
+        pdf.text('Pagos', startX - 10, y1 + barH - 1);
+        pdf.setFillColor(...success);
+        pdf.rect(startX, y1, Math.max(2, paidCount * scale), barH, 'F');
+        pdf.setTextColor(255,255,255);
+        pdf.setFont(undefined, 'bold');
+        pdf.text(String(paidCount), startX + Math.max(10, paidCount * scale) - 4, y1 + barH - 1, { align: 'right' });
+
+        // Pendentes
+        pdf.setFont(undefined, 'normal');
+        pdf.setTextColor(...gray700);
+        pdf.text('Pendentes', startX - 10, y2 + barH - 1);
+        pdf.setFillColor(...danger);
+        pdf.rect(startX, y2, Math.max(2, pendingCount * scale), barH, 'F');
+        pdf.setTextColor(255,255,255);
+        pdf.setFont(undefined, 'bold');
+        pdf.text(String(pendingCount), startX + Math.max(10, pendingCount * scale) - 4, y2 + barH - 1, { align: 'right' });
+        pdf.setTextColor(0,0,0);
+
+        return y + boxH + 10;
+      };
+
+      const drawTable = (yStart) => {
+        let y = yStart;
+        const headerH = 10;
+        const rowH = 9.5;
+        const colParticipanteX = margin + 4;
+        const colCartelaX = margin + Math.min(140, contentWidth * 0.54);
+        const colValorX = margin + contentWidth - 45;
+        const colStatusX = margin + contentWidth - 15;
+        const colValorW = 30;
+        const colStatusW = 22;
+        const colValorCenterX = colValorX + colValorW / 2;
+        const colStatusCenterX = colStatusX + colStatusW / 2;
+
+        const drawHeader = () => {
+          pdf.setFillColor(...primary);
+          pdf.rect(margin, y, contentWidth, headerH, 'F');
+          pdf.setFontSize(10);
+          pdf.setFont(undefined, 'bold');
+          pdf.setTextColor(255,255,255);
+          pdf.text('Participante', colParticipanteX, y + headerH / 2, { baseline: 'middle' });
+          pdf.text('Cartela', colCartelaX, y + headerH / 2, { baseline: 'middle' });
+          pdf.text('Valor', colValorCenterX, y + headerH / 2, { baseline: 'middle', align: 'center' });
+          pdf.text('Status', colStatusCenterX, y + headerH / 2, { baseline: 'middle', align: 'center' });
+          pdf.setTextColor(0,0,0);
+          y += headerH;
+        };
+
+        const ensurePage = () => {
+          if (y > pageHeight - 25) {
+            pdf.addPage();
+            y = drawPageHeader();
+            drawHeader();
+          }
+        };
+
+        drawHeader();
+
+        estParticipants.forEach((p, idx) => {
           ensurePage();
+
+          // Zebra row background
+          if (idx % 2 === 0) {
+            pdf.setFillColor(250,250,250);
+            pdf.rect(margin, y, contentWidth, rowH, 'F');
+          }
+
           const user = users.find(u => u.id === p.userId);
-          pdf.text(`- ${user?.name || 'Participante'} (Cartela: ${p.cartelaCode || 'ANTIGA'})`, 20, y);
-          y += 6;
+          const nome = user?.name || `Participante ${idx + 1}`;
+          const cartelaRaw = p.cartelaCode || 'ANTIGA';
+          const cartela = cartelaRaw.length > 24 ? `${cartelaRaw.slice(0, 24)}…` : cartelaRaw;
+
+          // Text columns
+          pdf.setFontSize(9.5);
+          pdf.setFont(undefined, 'normal');
+          const textY = y + rowH / 2 + 0.5;
+          pdf.text(nome, colParticipanteX, textY, { baseline: 'middle' });
+          pdf.text(cartela, colCartelaX, textY, { baseline: 'middle' });
+          pdf.text(`R$ ${betValue.toFixed(2)}`, colValorCenterX, textY, { baseline: 'middle', align: 'center' });
+
+          // Status pill
+          const status = p.paid ? 'Pago' : 'Não pago';
+          const pillFill = p.paid ? success : danger;
+          const pillText = [255,255,255];
+          const pillPad = 3;
+          const pillW = pdf.getTextWidth(status) + pillPad * 2;
+          const pillH = 6.5;
+          const pillX = colStatusCenterX - pillW / 2;
+          const pillY = y + (rowH - pillH) / 2;
+          pdf.setFillColor(...pillFill);
+          pdf.roundedRect(pillX, pillY, pillW, pillH, 3, 3, 'F');
+          pdf.setTextColor(...pillText);
+          pdf.setFontSize(9);
+          pdf.setFont(undefined, 'bold');
+          pdf.text(status, colStatusCenterX, textY - 0.5, { align: 'center', baseline: 'middle' });
+          pdf.setTextColor(0,0,0);
+          pdf.setFont(undefined, 'normal');
+
+          y += rowH;
+        });
+
+        return y;
+      };
+
+      let y = drawPageHeader();
+      y = drawCards(y);
+      y = drawBars(y);
+      y = drawTable(y);
+
+      // Devedores
+      if (pendingParticipants.length > 0) {
+        if (y > pageHeight - 40) {
+          pdf.addPage();
+          y = drawPageHeader();
+        }
+        pdf.setFontSize(12);
+        pdf.setFont(undefined, 'bold');
+        pdf.setTextColor(...danger);
+        pdf.text('Devedores (não pagos)', margin, y + 10);
+        pdf.setTextColor(0,0,0);
+        y += 16;
+        pdf.setFontSize(9.5);
+        pendingParticipants.forEach((p, i) => {
+          const user = users.find(u => u.id === p.userId);
+          pdf.text(`• ${user?.name || 'Participante'}  —  Cartela: ${p.cartelaCode || 'ANTIGA'}`, margin, y);
+          y += 6.5;
         });
       }
 
