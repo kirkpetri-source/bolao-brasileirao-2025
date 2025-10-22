@@ -50,6 +50,13 @@ const SERIE_A_2025_TEAMS = [
   { name: 'Sport', logo: 'https://logodetimes.com/times/sport/logo-sport-256.png' }
 ];
 
+const getSafeLogo = (team) => {
+  const url = team?.logo;
+  if (url && typeof url === 'string' && url.startsWith('http')) return url;
+  const name = team?.name || 'Time';
+  return `https://ui-avatars.com/api/?name=${encodeURIComponent(name)}&background=ffffff&color=0f172a&size=256`;
+};
+
 const initializeDatabase = async () => {
   try {
     const usersSnapshot = await getDocs(collection(db, 'users'));
@@ -287,6 +294,15 @@ const AppProvider = ({ children }) => {
     return () => clearInterval(timer);
   }, [currentUser, rounds]);
 
+  const isTeamProtected = (teamId) => {
+    const protectedStatuses = new Set(['open','closed','finished']);
+    return rounds.some(r => {
+      if (!protectedStatuses.has(r?.status)) return false;
+      const matches = Array.isArray(r?.matches) ? r.matches : [];
+      return matches.some(m => m?.homeTeamId === teamId || m?.awayTeamId === teamId);
+    });
+  };
+
   const value = {
     currentUser, setCurrentUser, users, teams, rounds, predictions, establishments, settings, loading,
     login, logout,
@@ -309,9 +325,31 @@ const AppProvider = ({ children }) => {
       await updateDoc(doc(db, 'users', id), toSave);
     },
     deleteUser: async (id) => { requireAdmin(); return await deleteDoc(doc(db, 'users', id)); },
-    addTeam: async (d) => { requireAdmin(); const r = await addDoc(collection(db, 'teams'), { ...d, createdAt: serverTimestamp() }); return { id: r.id, ...d }; },
-    updateTeam: async (id, d) => { requireAdmin(); return await updateDoc(doc(db, 'teams', id), d); },
-    deleteTeam: async (id) => { requireAdmin(); return await deleteDoc(doc(db, 'teams', id)); },
+    addTeam: async (d) => { 
+      requireAdmin(); 
+      const normalize = (s) => s?.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().trim();
+      const exists = teams.some(t => normalize(t.name) === normalize(d.name));
+      if (exists) throw new Error('Já existe um time com esse nome.');
+      const r = await addDoc(collection(db, 'teams'), { ...d, createdAt: serverTimestamp() }); 
+      return { id: r.id, ...d }; 
+    },
+    updateTeam: async (id, d) => {
+      requireAdmin();
+      const existing = teams.find(t => t.id === id);
+      if (!existing) throw new Error('Time inexistente');
+      const wantsNameChange = typeof d.name === 'string' && d.name.trim() !== existing.name;
+      if (wantsNameChange && isTeamProtected(id)) {
+        throw new Error('Este time está vinculado a rodadas ativas/fechadas/finalizadas. Alterar o nome não é permitido.');
+      }
+      return await updateDoc(doc(db, 'teams', id), d);
+    },
+    deleteTeam: async (id) => {
+      requireAdmin();
+      if (isTeamProtected(id)) {
+        throw new Error('Este time está vinculado a rodadas ativas/fechadas/finalizadas. Exclusão não é permitida.');
+      }
+      return await deleteDoc(doc(db, 'teams', id));
+    },
     deleteAllTeams: async () => {
       requireAdmin();
       const snapshot = await getDocs(collection(db, 'teams'));
@@ -737,11 +775,20 @@ const EstablishmentForm = ({ establishment, onSave, onCancel }) => {
 };
 
 const TeamForm = ({ team, onSave, onCancel }) => {
+  const { teams, rounds } = useApp();
   const [formData, setFormData] = useState(team || { name: '', logo: '', logoType: 'url' });
+  const normalizeName = (s) => s?.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().trim();
+  const protectedStatuses = new Set(['open','closed','finished']);
+  const isProtected = team?.id ? rounds?.some(r => protectedStatuses.has(r?.status) && Array.isArray(r?.matches) && r.matches.some(m => m.homeTeamId === team.id || m.awayTeamId === team.id)) : false;
 
   const handleSave = () => {
     if (!formData.name || !formData.logo) {
       alert('Preencha todos os campos!');
+      return;
+    }
+    const exists = teams?.some(t => normalizeName(t.name) === normalizeName(formData.name) && (!team || t.id !== team.id));
+    if (exists) {
+      alert('Já existe um time com esse nome.');
       return;
     }
     onSave(formData);
@@ -757,7 +804,8 @@ const TeamForm = ({ team, onSave, onCancel }) => {
         <div className="p-6 space-y-4">
           <div>
             <label className="block text-sm font-medium mb-2">Nome do Time</label>
-            <input type="text" value={formData.name} onChange={(e) => setFormData({ ...formData, name: e.target.value })} className="w-full px-4 py-2 border rounded-lg" placeholder="Ex: Flamengo" />
+            <input type="text" value={formData.name} onChange={(e) => setFormData({ ...formData, name: e.target.value })} disabled={isProtected} className="w-full px-4 py-2 border rounded-lg" placeholder="Ex: Flamengo" />
+            {isProtected && (<p className="text-xs text-amber-600 mt-1">Nome bloqueado: time vinculado a rodadas ativas/fechadas/finalizadas.</p>)}
           </div>
           <div>
             <label className="block text-sm font-medium mb-2">Logo</label>
@@ -1074,6 +1122,7 @@ const AdminPanel = ({ setView }) => {
   const [whatsappMessage, setWhatsappMessage] = useState(settings?.whatsappMessage || '');
   const [betValue, setBetValue] = useState(settings?.betValue || 15);
   const [pdfLoadingRoundId, setPdfLoadingRoundId] = useState(null);
+  const [adminPlayerModal, setAdminPlayerModal] = useState(null);
   // Valores padrão para regras, pontuação e desempate (usados se não houver conteúdo salvo)
   const initialBet = settings?.betValue != null ? settings.betValue : 15;
   const initialBetDisplay = Number(initialBet).toFixed(2).replace('.', ',');
@@ -1460,6 +1509,21 @@ const AdminPanel = ({ setView }) => {
     }, 0);
   };
 
+  // Abrir modal de palpites do participante no Admin
+  const openAdminPlayerModal = (roundId, item) => {
+    const round = rounds.find(r => r.id === roundId);
+    if (!round) return;
+    const preds = predictions.filter(p => p.userId === item.user.id && p.roundId === roundId && (p.cartelaCode || 'ANTIGA') === item.cartelaCode);
+    if (preds.length === 0) return;
+    const cartela = {
+      code: item.cartelaCode,
+      predictions: preds,
+      establishmentId: preds[0]?.establishmentId || null,
+      paid: preds[0]?.paid || false
+    };
+    setAdminPlayerModal({ round, item, cartela });
+  };
+
   const handleSaveWhatsAppMessage = async () => {
     try {
       const dataToSave = {
@@ -1493,6 +1557,204 @@ const AdminPanel = ({ setView }) => {
       alert('❌ Erro ao salvar: ' + error.message);
     }
   };
+
+  const generateTop5PDF = async (roundId) => {
+    try {
+      setPdfLoadingRoundId('top5-' + roundId);
+      const pdf = new jsPDF('p', 'mm', 'a4');
+      const pageWidth = pdf.internal.pageSize.getWidth();
+      const pageHeight = pdf.internal.pageSize.getHeight();
+      const margin = 15;
+      const contentWidth = pageWidth - margin * 2;
+
+      const data = getRoundDashboardData(roundId);
+      if (!data) { alert('⚠️ Rodada inválida ou não finalizada.'); return; }
+
+      const { round, ranking, winners, prizePerWinner, prizePool, paidCount } = data;
+      if (!ranking || ranking.length === 0) { alert('⚠️ Não há participantes pagos nesta rodada.'); return; }
+      const top5 = ranking.slice(0, 5);
+
+      // Paleta
+      const primary = [22, 163, 74];
+      const primaryDark = [16, 122, 56];
+      const gray700 = [55, 65, 81];
+      const lightBg = [248, 250, 252];
+      const border = [229, 231, 235];
+      const stripe = [245, 247, 250];
+
+      // Helper: truncar com elipse respeitando largura
+      const truncate = (txt, maxW, fontSize = 10, fontStyle = 'normal') => {
+        if (!txt) return '-';
+        pdf.setFontSize(fontSize);
+        pdf.setFont(undefined, fontStyle);
+        if (pdf.getTextWidth(txt) <= maxW) return txt;
+        const ellipsis = '…';
+        let low = 0, high = txt.length, best = ellipsis;
+        while (low <= high) {
+          const mid = Math.floor((low + high) / 2);
+          const candidate = txt.slice(0, mid) + ellipsis;
+          if (pdf.getTextWidth(candidate) <= maxW) { best = candidate; low = mid + 1; } else { high = mid - 1; }
+        }
+        return best;
+      };
+
+      // Metadados
+      try { pdf.setProperties && pdf.setProperties({ title: `Top 5 — ${round.name}`, subject: 'Ranking da Rodada', author: 'Bolão Brasileirão 2025' }); } catch (_) {}
+
+      // Cabeçalho
+      const drawHeader = () => {
+        pdf.setFillColor(...primary);
+        pdf.rect(0, 0, pageWidth, 26, 'F');
+        pdf.setTextColor(255, 255, 255);
+        pdf.setFontSize(14);
+        pdf.setFont(undefined, 'bold');
+        pdf.text('TOP 5 — BOLÃO BRASILEIRÃO 2025', margin, 11);
+        pdf.setFontSize(11);
+        pdf.setFont(undefined, 'normal');
+        pdf.text(round.name, margin, 19);
+        pdf.setFontSize(9);
+        pdf.text(`Gerado em: ${new Date().toLocaleString('pt-BR')}`, pageWidth - margin, 11, { align: 'right' });
+        pdf.setTextColor(0, 0, 0);
+        return 32;
+      };
+
+      // Cards resumo
+      const drawSummary = (y) => {
+        const gap = 6;
+        const cardW = (contentWidth - gap) / 2;
+        const cardH = 20;
+        const cards = [
+          { title: 'Cartelas pagas', value: String(paidCount) },
+          { title: 'Premiação total (85%)', value: `R$ ${prizePool.toFixed(2)}` },
+        ];
+        let x = margin;
+        cards.forEach((c) => {
+          pdf.setFillColor(...lightBg);
+          pdf.setDrawColor(...border);
+          pdf.roundedRect(x, y, cardW, cardH, 3, 3, 'FD');
+          pdf.setFontSize(8);
+          pdf.setTextColor(...gray700);
+          pdf.text(c.title, x + 8, y + 8);
+          pdf.setFont(undefined, 'bold');
+          pdf.setFontSize(12);
+          pdf.setTextColor(0, 0, 0);
+          pdf.text(c.value, x + 8, y + 15);
+          pdf.setFont(undefined, 'normal');
+          x += cardW + gap;
+        });
+        return y + cardH + 10;
+      };
+
+      let y = drawHeader();
+      y = drawSummary(y);
+
+      // Tabela Top 5
+      const cols = [
+        { key: 'pos', label: 'COLOCAÇÃO', w: 22, align: 'center' },
+        { key: 'name', label: 'NOMES', w: contentWidth - 22 - 70 - 32, align: 'left' },
+        { key: 'est', label: 'ESTABELECIMENTO', w: 70, align: 'left' },
+        { key: 'pts', label: 'PONTUAÇÃO', w: 32, align: 'center' },
+      ];
+
+      const rowH = 10; // linhas mais altas
+      const headerH = 12;
+      const tableH = headerH + rowH * top5.length;
+      pdf.setFillColor(...lightBg);
+      pdf.setDrawColor(...border);
+      pdf.roundedRect(margin, y, contentWidth, tableH + 8, 4, 4, 'FD');
+
+      // Títulos
+      let x = margin + 8;
+      pdf.setFontSize(9);
+      pdf.setFont(undefined, 'bold');
+      cols.forEach((col) => {
+        const headerX = x + (col.align === 'center' ? col.w / 2 : col.align === 'right' ? col.w : 0);
+        pdf.text(col.label, headerX, y + 8, { align: col.align });
+        x += col.w;
+      });
+
+      // Divisores verticais
+      pdf.setDrawColor(...border);
+      let sepX = margin + 8;
+      cols.forEach((col, i) => {
+        if (i > 0) {
+          pdf.line(sepX, y + headerH, sepX, y + headerH + rowH * top5.length + 4);
+        }
+        sepX += col.w;
+      });
+
+      // Linhas
+      pdf.setFont(undefined, 'normal');
+      pdf.setFontSize(10);
+
+      let rowTop = y + headerH + 4;
+      top5.forEach((item, idx) => {
+        // fundo listrado
+        if (idx % 2 === 1) {
+          pdf.setFillColor(...stripe);
+          pdf.rect(margin + 3, rowTop - 7, contentWidth - 6, rowH, 'F');
+        }
+
+        // medal para top 3
+        const medalColors = [
+          [234, 179, 8],
+          [148, 163, 184],
+          [217, 119, 6],
+        ];
+        const startX = margin + 8;
+        const posCellW = cols[0].w;
+        if (idx < 3) {
+          pdf.setFillColor(...medalColors[idx]);
+          const centerX = startX + posCellW / 2;
+          pdf.circle(centerX, rowTop - 2, 3, 'F');
+        }
+
+        const userName = item.user?.name || '-';
+        const est = establishments.find((e) => e.id === item.establishmentId)?.name || '-';
+        const pts = item.points;
+
+        let cx = margin + 8;
+        const cells = [
+          { text: String(idx + 1), w: cols[0].w, align: 'center', style: 'bold' },
+          { text: truncate(userName, cols[1].w - 2), w: cols[1].w, align: 'left' },
+          { text: truncate(est, cols[2].w - 2), w: cols[2].w, align: 'left' },
+          { text: String(pts), w: cols[3].w, align: 'center' },
+        ];
+
+        cells.forEach((cell) => {
+          if (cell.style === 'bold') pdf.setFont(undefined, 'bold');
+          else pdf.setFont(undefined, 'normal');
+          const tx = cx + (cell.align === 'center' ? cell.w / 2 : cell.align === 'right' ? cell.w - 1 : 1);
+          const ty = rowTop;
+          pdf.text(cell.text, tx, ty, { align: cell.align });
+          cx += cell.w;
+        });
+
+        // destaque campeão
+        if (idx === 0) {
+          pdf.setDrawColor(...primaryDark);
+          pdf.setLineWidth(0.3);
+          pdf.line(margin + 4, rowTop + 2, margin + contentWidth - 4, rowTop + 2);
+        }
+
+        rowTop += rowH;
+      });
+
+      // Rodapé
+      pdf.setFontSize(8);
+      pdf.setTextColor(...gray700);
+      pdf.text('Relatório Top 5 — Bolão Brasileirão 2025', margin, pageHeight - 8);
+
+      pdf.save(`Top5_${round.name.replace(/\s+/g, '_')}.pdf`);
+    } catch (err) {
+      console.error('Erro ao gerar Top 5 PDF:', err);
+      alert('❌ Erro ao gerar PDF Top 5: ' + err.message);
+    } finally {
+      setPdfLoadingRoundId(null);
+    }
+  };
+
+
 
   const generateRoundPDF = async (roundId) => {
     try {
@@ -1965,6 +2227,72 @@ const AdminPanel = ({ setView }) => {
     }
   };
 
+  // Corrige times duplicados por nome e relinca rodadas para o ID canônico
+  const handleFixTeamsDuplicates = async () => {
+    if (!confirm('🔧 Esta ação vai unificar times com o mesmo nome e atualizar todas as rodadas para apontarem ao time canônico.\n\nÉ recomendado fazer backup antes. Deseja continuar?')) {
+      return;
+    }
+    try {
+      // Buscar todos os times
+      const teamsSnap = await getDocs(collection(db, 'teams'));
+      const allTeams = teamsSnap.docs.map(d => ({ id: d.id, ...d.data() }));
+
+      const normalizeName = (s) => s?.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().trim();
+      const groups = {};
+      allTeams.forEach(t => {
+        const key = normalizeName(t.name || '');
+        if (!groups[key]) groups[key] = [];
+        groups[key].push(t);
+      });
+
+      const idMap = {}; // id duplicado => id canônico
+      const toDelete = [];
+      Object.values(groups).forEach(group => {
+        if (group.length > 1) {
+          const canonical = group[0];
+          group.slice(1).forEach(dup => {
+            idMap[dup.id] = canonical.id;
+            toDelete.push(dup.id);
+          });
+        }
+      });
+
+      if (Object.keys(idMap).length === 0) {
+        alert('✅ Nenhuma duplicação encontrada por nome.');
+        return;
+      }
+
+      // Atualizar todas as rodadas substituindo IDs duplicados pelo canônico
+      const roundsSnap = await getDocs(collection(db, 'rounds'));
+      let roundsChanged = 0;
+      for (const rd of roundsSnap.docs) {
+        const data = rd.data();
+        const matches = Array.isArray(data.matches) ? data.matches : [];
+        let changed = false;
+        const updatedMatches = matches.map(m => {
+          const home = idMap[m.homeTeamId] ? idMap[m.homeTeamId] : m.homeTeamId;
+          const away = idMap[m.awayTeamId] ? idMap[m.awayTeamId] : m.awayTeamId;
+          if (home !== m.homeTeamId || away !== m.awayTeamId) changed = true;
+          return { ...m, homeTeamId: home, awayTeamId: away };
+        });
+        if (changed) {
+          await updateDoc(doc(db, 'rounds', rd.id), { matches: updatedMatches });
+          roundsChanged++;
+        }
+      }
+
+      // Remover times duplicados
+      for (const id of toDelete) {
+        await deleteDoc(doc(db, 'teams', id));
+      }
+
+      alert(`✅ Correção concluída!\nTimes unificados: ${toDelete.length}\nRodadas atualizadas: ${roundsChanged}`);
+    } catch (error) {
+      console.error('Erro ao corrigir duplicados:', error);
+      alert('❌ Erro ao corrigir duplicados: ' + error.message);
+    }
+  };
+
   const saveRound = async (roundData) => {
     try {
       if (editingRound) {
@@ -2112,10 +2440,10 @@ const AdminPanel = ({ setView }) => {
                 return (
                   <div key={match.id} className="flex items-center justify-between bg-gray-50 p-3 rounded-lg">
                     <div className="flex items-center gap-3">
-                      <img src={homeTeam?.logo} alt="" className="w-8 h-8 object-contain" />
+                      <img src={getSafeLogo(homeTeam)} alt={homeTeam?.name || 'Time'} className="w-8 h-8 object-contain rounded bg-white ring-1 ring-gray-200" width={32} height={32} />
                       <span className="font-medium">{homeTeam?.name}</span>
                       <span className="text-gray-400 font-bold">VS</span>
-                      <img src={awayTeam?.logo} alt="" className="w-8 h-8 object-contain" />
+                      <img src={getSafeLogo(awayTeam)} alt={awayTeam?.name || 'Time'} className="w-8 h-8 object-contain rounded bg-white ring-1 ring-gray-200" width={32} height={32} />
                       <span className="font-medium">{awayTeam?.name}</span>
                     </div>
                     {match.finished && match.homeScore !== null && (
@@ -2290,7 +2618,7 @@ const AdminPanel = ({ setView }) => {
                           <strong>💡 Como funciona:</strong> Cada estabelecimento recebe 5% apenas dos palpites feitos nele.
                         </p>
                       </div>
-                      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                      <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-3">
                         {Object.entries(establishmentCommissions).map(([estId, data]) => {
                           const est = establishments.find(e => e.id === estId);
                           if (!est) return null;
@@ -2387,9 +2715,24 @@ const AdminPanel = ({ setView }) => {
                     <div className="bg-gray-50 p-4 border-b">
                       <div className="flex items-center justify-between">
                         <h3 className="text-lg font-bold">Ranking Completo</h3>
-                        {dashboardData.round.status === 'closed' && (
-                          <span className="text-xs font-medium text-yellow-600">Resultados parciais (rodada fechada)</span>
-                        )}
+                        <div className="flex items-center gap-2">
+                          {dashboardData.round.status === 'closed' && (
+                            <span className="text-xs font-medium text-yellow-600">Resultados parciais (rodada fechada)</span>
+                          )}
+                          <button
+                            onClick={() => generateTop5PDF(dashboardData.round.id)}
+                            className={`flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs sm:text-sm ${pdfLoadingRoundId === 'top5-' + dashboardData.round.id ? 'bg-purple-100 text-purple-400 opacity-60 cursor-not-allowed' : 'bg-purple-100 text-purple-700 hover:bg-purple-200'}`}
+                            aria-busy={pdfLoadingRoundId === 'top5-' + dashboardData.round.id}
+                            disabled={pdfLoadingRoundId === 'top5-' + dashboardData.round.id}
+                          >
+                            {pdfLoadingRoundId === 'top5-' + dashboardData.round.id ? (
+                              <Loader2 size={16} className="animate-spin" />
+                            ) : (
+                              <Download size={16} />
+                            )}
+                            <span>Top 5 PDF</span>
+                          </button>
+                        </div>
                       </div>
                     </div>
                     <div className="overflow-x-auto">
@@ -2423,7 +2766,7 @@ const AdminPanel = ({ setView }) => {
                             position = uniqueScores.length + 1;
                             
                             return (
-                              <tr key={`${item.user.id}-${item.cartelaCode}`} className={isWinner ? 'bg-yellow-50' : ''}>
+                              <tr key={`${item.user.id}-${item.cartelaCode}`} onClick={() => openAdminPlayerModal(dashboardData.round.id, item)} className={`${isWinner ? 'bg-yellow-50' : ''} cursor-pointer hover:bg-gray-50`}>
                                 <td className="px-4 py-3">
                                   <div className="flex items-center gap-2">
                                     <span className="font-bold">{position}º</span>
@@ -2483,31 +2826,31 @@ const AdminPanel = ({ setView }) => {
                 <h3 className="text-xl font-semibold mb-2">Nenhum estabelecimento cadastrado</h3>
               </div>
             ) : (
-              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+              <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-3">
                 {establishments.map((est) => (
-                  <div key={est.id} className="bg-white rounded-xl shadow-sm border p-6">
-                    <div className="flex items-start justify-between mb-4">
-                      <div className="flex items-center gap-3">
-                        <div className="bg-orange-100 p-3 rounded-lg">
-                          <Store className="text-orange-600" size={24} />
+                  <div key={est.id} className="bg-white rounded-lg shadow-sm border p-3">
+                    <div className="flex items-center justify-between gap-3">
+                      <div className="flex items-center gap-3 min-w-0">
+                        <div className="bg-orange-100 p-2 rounded-md">
+                          <Store className="text-orange-600" size={18} />
                         </div>
-                        <div>
-                          <h3 className="text-lg font-bold">{est.name}</h3>
-                          <p className="text-sm text-gray-600">{est.contact || 'Sem contato'}</p>
+                        <div className="min-w-0">
+                          <p className="font-medium truncate max-w-[12rem] sm:max-w-[16rem]">{est.name}</p>
+                          <p className="text-[11px] text-gray-600 truncate">{est.contact || 'Sem contato'}</p>
                         </div>
                       </div>
-                      <div className="flex gap-2">
-                        <button onClick={() => { setEditingEstablishment(est); setShowEstablishmentForm(true); }} className="p-2 bg-blue-100 text-blue-700 rounded-lg"><Edit2 size={16} /></button>
-                        <button onClick={() => confirm('Excluir?') && deleteEstablishment(est.id)} className="p-2 bg-red-100 text-red-700 rounded-lg"><Trash2 size={16} /></button>
+                      <div className="flex gap-1">
+                        <button onClick={() => { setEditingEstablishment(est); setShowEstablishmentForm(true); }} className="p-1.5 bg-blue-100 text-blue-700 rounded-md"><Edit2 size={14} /></button>
+                        <button onClick={() => confirm('Excluir?') && deleteEstablishment(est.id)} className="p-1.5 bg-red-100 text-red-700 rounded-md"><Trash2 size={14} /></button>
                       </div>
                     </div>
-                    <div className="space-y-2">
-                      <div className="flex items-center justify-between text-sm">
-                        <span className="text-gray-600">Telefone:</span>
-                        <span className="font-medium">{est.phone || '-'}</span>
+                    <div className="mt-2 grid grid-cols-2 gap-2 text-xs">
+                      <div className="flex items-center justify-between">
+                        <span className="text-gray-600">Telefone</span>
+                        <span className="font-medium truncate">{est.phone || '-'}</span>
                       </div>
-                      <div className="flex items-center justify-between text-sm">
-                        <span className="text-gray-600">Comissão:</span>
+                      <div className="flex items-center justify-between">
+                        <span className="text-gray-600">Comissão</span>
                         <span className="font-bold text-orange-600">{est.commission || 5}%</span>
                       </div>
                     </div>
@@ -2720,27 +3063,37 @@ const AdminPanel = ({ setView }) => {
                 </div>
               </div>
               <div className="flex flex-col sm:flex-row gap-3 w-full sm:w-auto sm:items-end">
-                <button onClick={handleResetTeams} className="w-full sm:w-auto flex items-center justify-center gap-2 bg-orange-600 text-white px-5 py-2.5 rounded-lg hover:bg-orange-700 text-sm sm:text-base">
-                  <Trophy size={20} /> Resetar para Série A 2025
+
+                <button onClick={handleFixTeamsDuplicates} className="w-full sm:w-auto flex items-center justify-center gap-2 bg-blue-600 text-white px-5 py-2.5 rounded-lg hover:bg-blue-700 text-sm sm:text-base">
+                  <CheckCircle size={20} /> Corrigir duplicados
                 </button>
                 <button onClick={() => { setEditingTeam(null); setShowTeamForm(true); }} className="w-full sm:w-auto flex items-center justify-center gap-2 bg-green-600 text-white px-5 py-2.5 rounded-lg text-sm sm:text-base">
                   <Plus size={20} /> Novo Time
                 </button>
               </div>
             </div>
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-              {teams.map((team) => (
-                <div key={team.id} className="bg-white rounded-xl shadow-sm border p-6">
-                  <div className="flex items-center justify-between mb-4">
-                    <img src={team.logo} alt={team.name} className="w-16 h-16 object-contain" />
-                    <div className="flex gap-2">
-                      <button onClick={() => { setEditingTeam(team); setShowTeamForm(true); }} className="p-2 bg-blue-100 text-blue-700 rounded-lg"><Edit2 size={16} /></button>
-                      <button onClick={() => confirm('Excluir?') && deleteTeam(team.id)} className="p-2 bg-red-100 text-red-700 rounded-lg"><Trash2 size={16} /></button>
+            <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-3">
+              {teams.map((team) => {
+                const protectedStatuses = new Set(['open','closed','finished']);
+                const isProtected = rounds.some(r => protectedStatuses.has(r?.status) && Array.isArray(r?.matches) && r.matches.some(m => m.homeTeamId === team.id || m.awayTeamId === team.id));
+                return (
+                  <div key={team.id} className="bg-white rounded-lg shadow-sm border p-3">
+                    <div className="flex items-center justify-between gap-3">
+                      <div className="flex items-center gap-3 min-w-0">
+                        <img src={getSafeLogo(team)} alt={team.name} className="w-12 h-12 object-contain rounded bg-white ring-1 ring-gray-200" width={48} height={48} />
+                        <span className="font-medium truncate max-w-[12rem] sm:max-w-[16rem]">{team.name}</span>
+                      </div>
+                      <div className="flex gap-1">
+                        <button onClick={() => { setEditingTeam(team); setShowTeamForm(true); }} className="p-1.5 bg-blue-100 text-blue-700 rounded-md"><Edit2 size={14} /></button>
+                        <button disabled={isProtected} onClick={() => !isProtected && confirm('Excluir?') && deleteTeam(team.id)} className={`p-1.5 rounded-md ${isProtected ? 'bg-gray-100 text-gray-400 cursor-not-allowed' : 'bg-red-100 text-red-700'}`} title={isProtected ? 'Time vinculado a rodadas — exclusão bloqueada' : 'Excluir'}>
+                          <Trash2 size={14} />
+                        </button>
+                      </div>
                     </div>
+                    {isProtected && (<p className="text-[11px] text-amber-600 mt-1">Vinculado a rodadas ativas/fechadas/finalizadas</p>)}
                   </div>
-                  <h3 className="text-lg font-bold">{team.name}</h3>
-                </div>
-              ))}
+                );
+              })}
             </div>
           </div>
         )}
@@ -3080,6 +3433,89 @@ const AdminPanel = ({ setView }) => {
       {showTeamForm && <TeamForm team={editingTeam} onSave={saveTeam} onCancel={() => { setEditingTeam(null); setShowTeamForm(false); }} />}
       {showEstablishmentForm && <EstablishmentForm establishment={editingEstablishment} onSave={saveEstablishment} onCancel={() => { setEditingEstablishment(null); setShowEstablishmentForm(false); }} />}
       {editingPassword && <PasswordModal user={editingPassword} onSave={savePassword} onCancel={() => setEditingPassword(null)} />}
+
+      {adminPlayerModal && (
+        <div className="fixed inset-0 z-50 bg-black/50 flex items-center justify-center" onClick={() => setAdminPlayerModal(null)}>
+          <div className="bg-white w-[95%] max-w-3xl rounded-xl shadow-xl" onClick={(e) => e.stopPropagation()}>
+            <div className="flex items-center justify-between p-4 border-b">
+              <div>
+                <h3 className="text-lg font-bold">Palpites do Participante</h3>
+                <p className="text-sm text-gray-500">{adminPlayerModal.round?.name}</p>
+              </div>
+              <button className="p-2 rounded hover:bg-gray-100" onClick={() => setAdminPlayerModal(null)} aria-label="Fechar">
+                <X size={20} />
+              </button>
+            </div>
+            <div className="p-4 space-y-4">
+              <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
+                <div>
+                  <p className="font-medium text-gray-900">{adminPlayerModal.item?.user?.name}</p>
+                  <p className="text-xs text-gray-500">{adminPlayerModal.item?.user?.whatsapp}</p>
+                </div>
+                <div className="flex items-center gap-2">
+                  <span className="font-mono text-sm bg-blue-100 text-blue-700 px-2 py-1 rounded">{adminPlayerModal.cartela?.code}</span>
+                  {(() => {
+                    const data = getRoundDashboardData(adminPlayerModal.round.id);
+                    const isWinner = data?.winners?.some(w => w.user.id === adminPlayerModal.item.user.id && w.cartelaCode === adminPlayerModal.item.cartelaCode);
+                    return isWinner ? (
+                      <span className="inline-flex items-center gap-1 bg-green-100 text-green-700 px-3 py-1 rounded-full text-sm font-medium">
+                        <Award size={16} /> Campeão — R$ {data?.prizePerWinner?.toFixed(2)}
+                      </span>
+                    ) : null;
+                  })()}
+                </div>
+              </div>
+
+              <div className="bg-gray-50 rounded-lg border">
+                <table className="w-full text-xs sm:text-sm">
+                  <thead className="bg-gray-100">
+                    <tr>
+                      <th className="px-3 py-2 text-left font-medium text-gray-600">Jogo</th>
+                      <th className="px-3 py-2 text-center font-medium text-gray-600">Palpite</th>
+                      <th className="px-3 py-2 text-center font-medium text-gray-600">Placar Final</th>
+                      <th className="px-3 py-2 text-center font-medium text-gray-600">Pts</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y">
+                    {adminPlayerModal.cartela?.predictions?.map((pred) => {
+                      const match = adminPlayerModal.round?.matches?.find(m => m.id === pred.matchId);
+                      if (!match) return null;
+                      const homeTeam = teams.find(t => t.id === match.homeTeamId) || teams.find(t => t.name === match.homeTeam);
+                      const awayTeam = teams.find(t => t.id === match.awayTeamId) || teams.find(t => t.name === match.awayTeam);
+                      let pts = 0;
+                      if (match.finished && match.homeScore !== null && match.awayScore !== null) {
+                        if (pred.homeScore === match.homeScore && pred.awayScore === match.awayScore) {
+                          pts = 3;
+                        } else {
+                          const predRes = pred.homeScore > pred.awayScore ? 'home' : pred.homeScore < pred.awayScore ? 'away' : 'draw';
+                          const matchRes = match.homeScore > match.awayScore ? 'home' : match.homeScore < match.awayScore ? 'away' : 'draw';
+                          if (predRes === matchRes) pts = 1;
+                        }
+                      }
+                      return (
+                        <tr key={pred.id}>
+                          <td className="px-3 py-2">
+                            <div className="flex items-center gap-2">
+                              <img src={getSafeLogo(homeTeam || { name: match.homeTeam })} alt={homeTeam?.name || match.homeTeam} className="w-6 h-6 object-contain rounded bg-white ring-1 ring-gray-200 flex-shrink-0" width={24} height={24} />
+                              <span className="text-gray-900">{homeTeam?.name || match.homeTeam}</span>
+                              <span className="text-gray-400">vs</span>
+                              <img src={getSafeLogo(awayTeam || { name: match.awayTeam })} alt={awayTeam?.name || match.awayTeam} className="w-6 h-6 object-contain rounded bg-white ring-1 ring-gray-200 flex-shrink-0" width={24} height={24} />
+                              <span className="text-gray-900">{awayTeam?.name || match.awayTeam}</span>
+                            </div>
+                          </td>
+                          <td className="px-3 py-2 text-center font-mono">{pred.homeScore} x {pred.awayScore}</td>
+                          <td className="px-3 py-2 text-center font-mono">{match.finished ? `${match.homeScore} x ${match.awayScore}` : '-'}</td>
+                          <td className="px-3 py-2 text-center font-semibold">{pts}</td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };
@@ -3168,6 +3604,21 @@ const UserPanel = ({ setView }) => {
     });
     
     return Object.values(cartelaMap);
+  };
+
+  // Abrir detalhes da cartela a partir de uma linha do ranking
+  const openRankingCartelaDetails = (roundId, item) => {
+    const round = rounds.find(r => r.id === roundId);
+    if (!round) return;
+    const preds = predictions.filter(p => p.userId === item.user.id && p.roundId === roundId && (p.cartelaCode || 'ANTIGA') === item.cartelaCode);
+    if (preds.length === 0) return;
+    const cartela = {
+      code: item.cartelaCode,
+      predictions: preds,
+      establishmentId: preds[0]?.establishmentId || null,
+      paid: preds[0]?.paid || false
+    };
+    setCartelaDetails({ round, cartela });
   };
 
   const calculateRoundPoints = (roundId) => {
@@ -3457,13 +3908,13 @@ const UserPanel = ({ setView }) => {
                               <div className="space-y-2">
                                 <div className="flex items-center justify-between gap-2">
                                   <div className="flex items-center gap-2 flex-1 min-w-0">
-                                    <img src={homeTeam?.logo} alt="" className="w-6 h-6 object-contain flex-shrink-0" />
+                                    <img src={getSafeLogo(homeTeam)} alt={homeTeam?.name || ''} className="w-6 h-6 object-contain rounded bg-white ring-1 ring-gray-200 flex-shrink-0" width={24} height={24} />
                                     <span className="font-medium text-xs truncate">{homeTeam?.name}</span>
                                   </div>
                                   <span className="text-gray-400 font-bold text-xs px-1 flex-shrink-0">VS</span>
                                   <div className="flex items-center gap-2 flex-1 min-w-0 justify-end">
                                     <span className="font-medium text-xs truncate">{awayTeam?.name}</span>
-                                    <img src={awayTeam?.logo} alt="" className="w-6 h-6 object-contain flex-shrink-0" />
+                                    <img src={getSafeLogo(awayTeam)} alt={awayTeam?.name || ''} className="w-6 h-6 object-contain rounded bg-white ring-1 ring-gray-200 flex-shrink-0" width={24} height={24} />
                                   </div>
                                 </div>
                                 
@@ -3605,13 +4056,13 @@ const UserPanel = ({ setView }) => {
                   <div className="flex flex-col gap-3">
                     <div className="flex items-center justify-between">
                       <div className="flex items-center gap-2 flex-1">
-                        <img src={homeTeam?.logo} alt="" className="w-8 h-8 flex-shrink-0" />
+                        <img src={getSafeLogo(homeTeam)} alt={homeTeam?.name || ''} className="w-8 h-8 object-contain rounded bg-white ring-1 ring-gray-200 flex-shrink-0" width={32} height={32} />
                         <span className="font-medium text-sm truncate">{homeTeam?.name}</span>
                       </div>
                       <span className="text-gray-400 font-bold px-2">VS</span>
                       <div className="flex items-center gap-2 flex-1 justify-end">
                         <span className="font-medium text-sm truncate">{awayTeam?.name}</span>
-                        <img src={awayTeam?.logo} alt="" className="w-8 h-8 flex-shrink-0" />
+                        <img src={getSafeLogo(awayTeam)} alt={awayTeam?.name || ''} className="w-8 h-8 object-contain rounded bg-white ring-1 ring-gray-200 flex-shrink-0" width={32} height={32} />
                       </div>
                     </div>
                     
@@ -3698,7 +4149,7 @@ const UserPanel = ({ setView }) => {
                   return (
                     <div key={i} className="flex items-center justify-between bg-white p-3 rounded-lg border">
                       <div className="flex items-center gap-2 text-sm">
-                        <img src={homeTeam?.logo} alt="" className="w-6 h-6" />
+                        <img src={getSafeLogo(homeTeam)} alt={homeTeam?.name || ''} className="w-6 h-6 object-contain rounded bg-white ring-1 ring-gray-200" width={24} height={24} />
                         <span className="font-medium">{homeTeam?.name}</span>
                       </div>
                       <div className="flex items-center gap-2 font-bold text-green-600">
@@ -3707,8 +4158,8 @@ const UserPanel = ({ setView }) => {
                         <span className="bg-green-100 px-3 py-1 rounded">{pred.awayScore}</span>
                       </div>
                       <div className="flex items-center gap-2 text-sm">
+                        <img src={getSafeLogo(awayTeam)} alt={awayTeam?.name || ''} className="w-6 h-6 object-contain rounded bg-white ring-1 ring-gray-200" width={24} height={24} />
                         <span className="font-medium">{awayTeam?.name}</span>
-                        <img src={awayTeam?.logo} alt="" className="w-6 h-6" />
                       </div>
                     </div>
                   );
@@ -3756,18 +4207,40 @@ const UserPanel = ({ setView }) => {
               const match = round.matches?.find(m => m.id === p.matchId);
               const homeTeam = teams.find(t => t.id === match?.homeTeamId);
               const awayTeam = teams.find(t => t.id === match?.awayTeamId);
+
+              let pts = 0;
+              if (match?.finished && match.homeScore != null && match.awayScore != null) {
+                if (p.homeScore === match.homeScore && p.awayScore === match.awayScore) {
+                  pts = 3;
+                } else {
+                  const predResult = p.homeScore > p.awayScore ? 'home' : p.homeScore < p.awayScore ? 'away' : 'draw';
+                  const matchResult = match.homeScore > match.awayScore ? 'home' : match.homeScore < match.awayScore ? 'away' : 'draw';
+                  if (predResult === matchResult) {
+                    pts = 1;
+                  }
+                }
+              }
+
               return (
                 <div key={p.matchId} className="border rounded-lg p-3 flex items-center justify-between">
                   <div className="flex items-center gap-2 min-w-0">
-                    <img src={homeTeam?.logo} alt="" className="w-6 h-6 flex-shrink-0" />
+                    <img src={getSafeLogo(homeTeam)} alt={homeTeam?.name || ''} className="w-6 h-6 object-contain rounded bg-white ring-1 ring-gray-200 flex-shrink-0" width={24} height={24} />
                     <span className="text-sm truncate">{homeTeam?.name}</span>
                     <span className="text-gray-400 font-bold mx-2">X</span>
                     <span className="text-sm truncate">{awayTeam?.name}</span>
-                    <img src={awayTeam?.logo} alt="" className="w-6 h-6 flex-shrink-0" />
+                    <img src={getSafeLogo(awayTeam)} alt={awayTeam?.name || ''} className="w-6 h-6 object-contain rounded bg-white ring-1 ring-gray-200 flex-shrink-0" width={24} height={24} />
                   </div>
-                  <div className="flex items-center gap-2">
-                    <span className="text-sm font-bold bg-gray-100 px-2 py-1 rounded">{p.homeScore}</span>
-                    <span className="text-sm font-bold bg-gray-100 px-2 py-1 rounded">{p.awayScore}</span>
+                  <div className="flex items-center gap-3">
+                    <div className="flex items-center gap-2">
+                      <span className="text-sm font-bold bg-gray-100 px-2 py-1 rounded">{p.homeScore}</span>
+                      <span className="text-sm font-bold bg-gray-100 px-2 py-1 rounded">{p.awayScore}</span>
+                    </div>
+                    {match?.finished && (
+                      <div className="flex items-center gap-2">
+                        <span className="text-xs text-gray-600">Final: {match.homeScore} x {match.awayScore}</span>
+                        <span className={`text-xs font-bold px-2 py-1 rounded ${pts > 0 ? 'bg-green-100 text-green-700' : 'bg-gray-100 text-gray-500'}`}>{pts} pts</span>
+                      </div>
+                    )}
                   </div>
                 </div>
               );
@@ -4250,7 +4723,11 @@ const UserPanel = ({ setView }) => {
                         const est = establishments.find(e => e.id === item.establishmentId);
                         
                         return (
-                          <tr key={`${item.user.id}-${item.cartelaCode}`} className={`${item.user.id === currentUser.id ? 'bg-green-50' : ''} ${isWinner ? 'bg-yellow-50' : ''}`}>
+                          <tr
+                            key={`${item.user.id}-${item.cartelaCode}`}
+                            onClick={() => openRankingCartelaDetails(selectedRankingRound, item)}
+                            className={`cursor-pointer hover:bg-gray-50 ${item.user.id === currentUser.id ? 'bg-green-50' : ''} ${isWinner ? 'bg-yellow-50' : ''}`}
+                          >
                             <td className="px-6 py-4">
                               <div className="flex items-center gap-2">
                                 <span className="text-lg font-bold">{position}º</span>
