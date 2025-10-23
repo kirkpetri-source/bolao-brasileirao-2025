@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef, createContext, useContext } from 'react';
+import React, { useState, useEffect, useRef, createContext, useContext, useMemo } from 'react';
 import { Trophy, Users, Calendar, TrendingUp, LogOut, Eye, EyeOff, Plus, Edit2, Trash2, Upload, ExternalLink, X, UserPlus, Target, Award, ChevronDown, ChevronUp, Check, Key, DollarSign, CheckCircle, XCircle, AlertCircle, FileText, Download, Store, Filter, Loader2 } from 'lucide-react';
 import { initializeApp } from 'firebase/app';
 import { getFirestore, collection, addDoc, updateDoc, deleteDoc, doc, getDocs, getDoc, onSnapshot, serverTimestamp, query, where } from 'firebase/firestore';
@@ -1141,6 +1141,31 @@ const AdminPanel = ({ setView }) => {
     setExpandedAdminRounds(prev => ({ ...prev, [roundId]: !prev[roundId] }));
   };
 
+  // Selecionar automaticamente a rodada mais recente no dashboard
+  useEffect(() => {
+    const dashboardRounds = rounds.filter(r => r.status === 'finished' || r.status === 'closed');
+    const toTs = (r) => {
+      if (r?.closeAt) {
+        const t = new Date(r.closeAt).getTime();
+        if (!isNaN(t)) return t;
+      }
+      const ca = r?.createdAt;
+      if (ca && typeof ca.toDate === 'function') {
+        return ca.toDate().getTime();
+      }
+      if (ca && typeof ca === 'object' && typeof ca.seconds === 'number') {
+        return ca.seconds * 1000;
+      }
+      return typeof r?.number === 'number' ? r.number : 0;
+    };
+    if (dashboardRounds.length > 0) {
+      const latestRound = dashboardRounds.sort((a, b) => toTs(b) - toTs(a))[0];
+      if (selectedDashboardRound !== latestRound.id) {
+        setSelectedDashboardRound(latestRound.id);
+      }
+    }
+  }, [rounds]);
+
   // Helpers de formatação (Markdown simples)
   const wrapSelection = (start, end) => {
     const ta = rulesTextareaRef.current;
@@ -1226,14 +1251,7 @@ const AdminPanel = ({ setView }) => {
     return () => { if (saveTimerRef.current) clearTimeout(saveTimerRef.current); };
   }, [rulesText, scoringCriteria, tiebreakRules]);
 
-  useEffect(() => {
-    if (!selectedDashboardRound) {
-      const rankable = rounds.filter(r => r.status === 'finished' || r.status === 'closed').sort((a, b) => b.number - a.number);
-      if (rankable.length > 0) {
-        setSelectedDashboardRound(rankable[0].id);
-      }
-    }
-  }, [rounds]);
+
 
   const handleDeleteUser = async (user) => {
     if (!confirm(`⚠️ ATENÇÃO!\n\nDeseja realmente excluir o usuário "${user.name}"?\n\nIsso também excluirá todos os palpites deste usuário!\n\nEsta ação não pode ser desfeita.`)) {
@@ -1508,6 +1526,11 @@ const AdminPanel = ({ setView }) => {
       return sum + calculateUserRoundPoints(userId, roundId, code);
     }, 0);
   };
+
+  // Cache do dashboard data para melhorar performance
+  const dashboardData = useMemo(() => {
+    return getRoundDashboardData(selectedDashboardRound);
+  }, [selectedDashboardRound, rounds, predictions, users, settings]);
 
   // Abrir modal de palpites do participante no Admin
   const openAdminPlayerModal = (roundId, item) => {
@@ -2514,7 +2537,19 @@ const AdminPanel = ({ setView }) => {
                   )}
                   {rounds
                     .filter(r => r.status === 'finished' || r.status === 'closed')
-                    .sort((a, b) => b.number - a.number)
+                    .sort((a, b) => {
+                      const toTs = (r) => {
+                        if (r?.closeAt) {
+                          const t = new Date(r.closeAt).getTime();
+                          if (!isNaN(t)) return t;
+                        }
+                        const ca = r?.createdAt;
+                        if (ca && typeof ca.toDate === 'function') return ca.toDate().getTime();
+                        if (ca && typeof ca === 'object' && typeof ca.seconds === 'number') return ca.seconds * 1000;
+                        return typeof r?.number === 'number' ? r.number : 0;
+                      };
+                      return toTs(b) - toTs(a);
+                    })
                     .map(round => (
                       <option key={round.id} value={round.id}>
                         {round.name} {round.status === 'closed' ? '• Parcial' : ''}
@@ -2525,8 +2560,6 @@ const AdminPanel = ({ setView }) => {
             </div>
             
             {(() => {
-              const dashboardData = getRoundDashboardData(selectedDashboardRound);
-
               if (!dashboardData) {
                 return (
                   <div className="bg-white rounded-xl p-12 text-center border-2 border-dashed">
@@ -3112,10 +3145,7 @@ const AdminPanel = ({ setView }) => {
                         <p className="text-gray-600 text-sm">{user.whatsapp}</p>
                       </div>
                       <div className="flex flex-wrap items-center gap-3 sm:gap-4">
-                        <div className="text-right">
-                          <div className="text-2xl font-bold text-green-600">0 pts</div>
-                          <p className="text-gray-600 text-sm">{userPreds.length} palpites</p>
-                        </div>
+
                         <button 
                           onClick={() => setEditingPassword(user)} 
                           className="flex items-center gap-2 bg-orange-100 text-orange-700 px-4 py-2 rounded-lg hover:bg-orange-200 transition"
@@ -3556,7 +3586,21 @@ const UserPanel = ({ setView }) => {
   const openRounds = rounds.filter(r => r.status === 'open' && !isRoundTimedClosed(r));
   const closedRounds = rounds.filter(r => r.status === 'closed' || (r.status === 'open' && isRoundTimedClosed(r))).sort((a, b) => b.number - a.number);
   const finishedRounds = rounds.filter(r => r.status === 'finished').sort((a, b) => b.number - a.number);
-  const rankableRounds = rounds.filter(r => r.status === 'finished' || r.status === 'closed').sort((a, b) => b.number - a.number);
+  const rankableRounds = rounds
+    .filter(r => r.status === 'finished' || r.status === 'closed')
+    .sort((a, b) => {
+      const toTs = (r) => {
+        if (r?.closeAt) {
+          const t = new Date(r.closeAt).getTime();
+          if (!isNaN(t)) return t;
+        }
+        const ca = r?.createdAt;
+        if (ca && typeof ca.toDate === 'function') return ca.toDate().getTime();
+        if (ca && typeof ca === 'object' && typeof ca.seconds === 'number') return ca.seconds * 1000;
+        return typeof r?.number === 'number' ? r.number : 0;
+      };
+      return toTs(b) - toTs(a);
+    });
   const upcomingRounds = rounds.filter(r => r.status === 'upcoming').sort((a, b) => a.number - b.number);
   const predictableRounds = rounds.filter(r => (r.status === 'open' || r.status === 'upcoming') && !isRoundTimedClosed(r));
 
@@ -3577,8 +3621,11 @@ const UserPanel = ({ setView }) => {
     .sort((a, b) => b.number - a.number);
 
   useEffect(() => {
-    if (!selectedRankingRound && rankableRounds.length > 0) {
-      setSelectedRankingRound(rankableRounds[0].id);
+    if (rankableRounds.length > 0) {
+      const latestRound = rankableRounds[0];
+      if (selectedRankingRound !== latestRound.id) {
+        setSelectedRankingRound(latestRound.id);
+      }
     }
   }, [rankableRounds]);
 
@@ -4185,68 +4232,94 @@ const UserPanel = ({ setView }) => {
   const CartelaDetailsModal = ({ round, cartela, onClose }) => {
     const { teams, establishments } = useApp();
     return (
-      <div className="fixed inset-0 bg-black bg-opacity-70 flex items-center justify-center p-4 z-50">
-        <div className="bg-white rounded-2xl max-w-lg w-full max-h-[90vh] overflow-y-auto">
-          <div className="p-6 border-b sticky top-0 bg-white">
-            <div className="flex items-center gap-2">
-              <FileText size={20} className="text-blue-600" />
-              <h3 className="text-xl font-bold">Detalhes da Cartela</h3>
+      <div className="fixed inset-0 z-50 bg-black/50 flex items-center justify-center" onClick={onClose}>
+        <div className="bg-white w-[95%] max-w-3xl rounded-xl shadow-xl" onClick={(e) => e.stopPropagation()}>
+          <div className="flex items-center justify-between p-4 border-b">
+            <div>
+              <h3 className="text-lg font-bold">Palpites do Participante</h3>
+              <p className="text-sm text-gray-500">{round?.name}</p>
             </div>
-            <div className="mt-2">
-              <p className="font-mono text-sm font-bold text-blue-700">🎫 {cartela.code}</p>
-              <p className="text-xs text-gray-600">{round.name}</p>
-              {cartela.establishmentId && (
-                <p className="text-xs text-orange-600 mt-1 flex items-center gap-1">
-                  <Store size={12} /> {(establishments.find(e => e.id === cartela.establishmentId) || {}).name}
-                </p>
-              )}
+            <button className="p-2 rounded hover:bg-gray-100" onClick={onClose} aria-label="Fechar">
+              <X size={20} />
+            </button>
+          </div>
+
+          <div className="p-4 space-y-4">
+            <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
+              <div className="flex items-center gap-2">
+                <span className="font-mono text-sm bg-blue-100 text-blue-700 px-2 py-1 rounded">{cartela?.code}</span>
+                {cartela?.establishmentId && (
+                  <span className="inline-flex items-center gap-1 text-xs text-orange-600">
+                    <Store size={12} /> {(establishments.find(e => e.id === cartela.establishmentId) || {}).name}
+                  </span>
+                )}
+              </div>
+            </div>
+
+            <div className="bg-gray-50 rounded-lg border">
+              <table className="w-full text-xs sm:text-sm">
+                <thead className="bg-gray-100">
+                  <tr>
+                    <th className="px-3 py-2 text-left font-medium text-gray-600">Jogo</th>
+                    <th className="px-3 py-2 text-center font-medium text-gray-600">Palpite</th>
+                    <th className="px-3 py-2 text-center font-medium text-gray-600">Placar Final</th>
+                    <th className="px-3 py-2 text-center font-medium text-gray-600">Pts</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y">
+                  {cartela?.predictions?.map((p) => {
+                    const match = round?.matches?.find(m => m.id === p.matchId);
+                    if (!match) return null;
+                    const homeTeam = teams.find(t => t.id === match.homeTeamId) || teams.find(t => t.name === match.homeTeam);
+                    const awayTeam = teams.find(t => t.id === match.awayTeamId) || teams.find(t => t.name === match.awayTeam);
+
+                    let pts = 0;
+                    if (match.finished && match.homeScore !== null && match.awayScore !== null) {
+                      if (p.homeScore === match.homeScore && p.awayScore === match.awayScore) {
+                        pts = 3;
+                      } else {
+                        const predRes = p.homeScore > p.awayScore ? 'home' : p.homeScore < p.awayScore ? 'away' : 'draw';
+                        const matchRes = match.homeScore > match.awayScore ? 'home' : match.homeScore < match.awayScore ? 'away' : 'draw';
+                        if (predRes === matchRes) pts = 1;
+                      }
+                    }
+
+                    return (
+                      <tr key={p.matchId}>
+                        <td className="px-3 py-2">
+                          <div className="flex items-center gap-2">
+                            <img src={getSafeLogo(homeTeam)} alt={homeTeam?.name || ''} className="w-5 h-5 object-contain rounded bg-white ring-1 ring-gray-200" width={20} height={20} />
+                            <span className="truncate max-w-[8rem]">{homeTeam?.name}</span>
+                            <span className="text-gray-400 font-bold mx-2">X</span>
+                            <span className="truncate max-w-[8rem]">{awayTeam?.name}</span>
+                            <img src={getSafeLogo(awayTeam)} alt={awayTeam?.name || ''} className="w-5 h-5 object-contain rounded bg-white ring-1 ring-gray-200" width={20} height={20} />
+                          </div>
+                        </td>
+                        <td className="px-3 py-2 text-center">
+                          <span className="inline-flex items-center gap-2">
+                            <span className="text-sm font-bold bg-gray-100 px-2 py-1 rounded">{p.homeScore}</span>
+                            <span className="text-sm font-bold bg-gray-100 px-2 py-1 rounded">{p.awayScore}</span>
+                          </span>
+                        </td>
+                        <td className="px-3 py-2 text-center">
+                          {match.finished ? (
+                            <span className="text-xs text-gray-700">{match.homeScore} x {match.awayScore}</span>
+                          ) : (
+                            <span className="text-xs text-gray-400">—</span>
+                          )}
+                        </td>
+                        <td className="px-3 py-2 text-center">
+                          <span className={`text-xs font-bold px-2 py-1 rounded ${pts > 0 ? 'bg-green-100 text-green-700' : 'bg-gray-100 text-gray-500'}`}>{pts}</span>
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
             </div>
           </div>
-          <div className="p-6 space-y-3">
-            {cartela.predictions.map((p) => {
-              const match = round.matches?.find(m => m.id === p.matchId);
-              const homeTeam = teams.find(t => t.id === match?.homeTeamId);
-              const awayTeam = teams.find(t => t.id === match?.awayTeamId);
 
-              let pts = 0;
-              if (match?.finished && match.homeScore != null && match.awayScore != null) {
-                if (p.homeScore === match.homeScore && p.awayScore === match.awayScore) {
-                  pts = 3;
-                } else {
-                  const predResult = p.homeScore > p.awayScore ? 'home' : p.homeScore < p.awayScore ? 'away' : 'draw';
-                  const matchResult = match.homeScore > match.awayScore ? 'home' : match.homeScore < match.awayScore ? 'away' : 'draw';
-                  if (predResult === matchResult) {
-                    pts = 1;
-                  }
-                }
-              }
-
-              return (
-                <div key={p.matchId} className="border rounded-lg p-3 flex items-center justify-between">
-                  <div className="flex items-center gap-2 min-w-0">
-                    <img src={getSafeLogo(homeTeam)} alt={homeTeam?.name || ''} className="w-6 h-6 object-contain rounded bg-white ring-1 ring-gray-200 flex-shrink-0" width={24} height={24} />
-                    <span className="text-sm truncate">{homeTeam?.name}</span>
-                    <span className="text-gray-400 font-bold mx-2">X</span>
-                    <span className="text-sm truncate">{awayTeam?.name}</span>
-                    <img src={getSafeLogo(awayTeam)} alt={awayTeam?.name || ''} className="w-6 h-6 object-contain rounded bg-white ring-1 ring-gray-200 flex-shrink-0" width={24} height={24} />
-                  </div>
-                  <div className="flex items-center gap-3">
-                    <div className="flex items-center gap-2">
-                      <span className="text-sm font-bold bg-gray-100 px-2 py-1 rounded">{p.homeScore}</span>
-                      <span className="text-sm font-bold bg-gray-100 px-2 py-1 rounded">{p.awayScore}</span>
-                    </div>
-                    {match?.finished && (
-                      <div className="flex items-center gap-2">
-                        <span className="text-xs text-gray-600">Final: {match.homeScore} x {match.awayScore}</span>
-                        <span className={`text-xs font-bold px-2 py-1 rounded ${pts > 0 ? 'bg-green-100 text-green-700' : 'bg-gray-100 text-gray-500'}`}>{pts} pts</span>
-                      </div>
-                    )}
-                  </div>
-                </div>
-              );
-            })}
-          </div>
-          <div className="p-6 border-t sticky bottom-0 bg-white">
+          <div className="p-4 border-t">
             <button onClick={onClose} className="w-full px-4 py-2 border rounded-lg">Fechar</button>
           </div>
         </div>
@@ -4437,8 +4510,14 @@ const UserPanel = ({ setView }) => {
       return sum;
     }, 0);
   
-  const ranking = selectedRankingRound ? getRankingForRound(selectedRankingRound) : [];
-  const roundPrize = selectedRankingRound ? getRoundPrize(selectedRankingRound) : null;
+  // Cache do ranking para melhorar performance
+  const ranking = useMemo(() => {
+    return selectedRankingRound ? getRankingForRound(selectedRankingRound) : [];
+  }, [selectedRankingRound, predictions, rounds, users]);
+  
+  const roundPrize = useMemo(() => {
+    return selectedRankingRound ? getRoundPrize(selectedRankingRound) : null;
+  }, [selectedRankingRound, settings]);
 
   return (
     <div className="min-h-screen bg-gray-50">
