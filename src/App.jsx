@@ -3507,9 +3507,9 @@ const AdminPanel = ({ setView }) => {
                     </tr>
                   </thead>
                   <tbody className="divide-y">
-                    {adminPlayerModal.cartela?.predictions?.map((pred) => {
-                      const match = adminPlayerModal.round?.matches?.find(m => m.id === pred.matchId);
-                      if (!match) return null;
+                    {(adminPlayerModal.round?.matches || []).map((match) => {
+                      const pred = adminPlayerModal.cartela?.predictions?.find(p => p.matchId === match.id);
+                      if (!pred) return null;
                       const homeTeam = teams.find(t => t.id === match.homeTeamId) || teams.find(t => t.name === match.homeTeam);
                       const awayTeam = teams.find(t => t.id === match.awayTeamId) || teams.find(t => t.name === match.awayTeam);
                       let pts = 0;
@@ -3523,7 +3523,7 @@ const AdminPanel = ({ setView }) => {
                         }
                       }
                       return (
-                        <tr key={pred.id}>
+                        <tr key={match.id}>
                           <td className="px-3 py-2">
                             <div className="flex items-center gap-2">
                               <img src={getSafeLogo(homeTeam || { name: match.homeTeam })} alt={homeTeam?.name || match.homeTeam} className="w-6 h-6 object-contain rounded bg-white ring-1 ring-gray-200 flex-shrink-0" width={24} height={24} />
@@ -4190,11 +4190,13 @@ const UserPanel = ({ setView }) => {
             <div className="bg-gray-50 rounded-xl p-4 mb-6 max-h-60 overflow-y-auto">
               <h4 className="font-semibold mb-3">Seus palpites:</h4>
               <div className="space-y-2">
-                {predictionsData.map((pred, i) => {
-                  const homeTeam = teams.find(t => t.id === pred.match.homeTeamId);
-                  const awayTeam = teams.find(t => t.id === pred.match.awayTeamId);
+                {(round?.matches || []).map((match) => {
+                  const pred = predictionsData.find(p => p.match?.id === match.id);
+                  if (!pred) return null;
+                  const homeTeam = teams.find(t => t.id === match.homeTeamId);
+                  const awayTeam = teams.find(t => t.id === match.awayTeamId);
                   return (
-                    <div key={i} className="flex items-center justify-between bg-white p-3 rounded-lg border">
+                    <div key={match.id} className="flex items-center justify-between bg-white p-3 rounded-lg border">
                       <div className="flex items-center gap-2 text-sm">
                         <img src={getSafeLogo(homeTeam)} alt={homeTeam?.name || ''} className="w-6 h-6 object-contain rounded bg-white ring-1 ring-gray-200" width={24} height={24} />
                         <span className="font-medium">{homeTeam?.name}</span>
@@ -4267,9 +4269,9 @@ const UserPanel = ({ setView }) => {
                   </tr>
                 </thead>
                 <tbody className="divide-y">
-                  {cartela?.predictions?.map((p) => {
-                    const match = round?.matches?.find(m => m.id === p.matchId);
-                    if (!match) return null;
+                  {(round?.matches || []).map((match) => {
+                    const p = cartela?.predictions?.find(pr => pr.matchId === match.id);
+                    if (!p) return null;
                     const homeTeam = teams.find(t => t.id === match.homeTeamId) || teams.find(t => t.name === match.homeTeam);
                     const awayTeam = teams.find(t => t.id === match.awayTeamId) || teams.find(t => t.name === match.awayTeam);
 
@@ -4285,7 +4287,7 @@ const UserPanel = ({ setView }) => {
                     }
 
                     return (
-                      <tr key={p.matchId}>
+                      <tr key={match.id}>
                         <td className="px-3 py-2">
                           <div className="flex items-center gap-2">
                             <img src={getSafeLogo(homeTeam)} alt={homeTeam?.name || ''} className="w-5 h-5 object-contain rounded bg-white ring-1 ring-gray-200" width={20} height={20} />
