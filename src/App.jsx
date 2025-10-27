@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef, createContext, useContext, useMemo } from 'react';
-import { Trophy, Users, Calendar, TrendingUp, LogOut, Eye, EyeOff, Plus, Edit2, Trash2, Upload, ExternalLink, X, UserPlus, Target, Award, ChevronDown, ChevronUp, Check, Key, DollarSign, CheckCircle, XCircle, AlertCircle, FileText, Download, Store, Filter, Loader2 } from 'lucide-react';
+ import { Trophy, Users, Calendar, TrendingUp, LogOut, Eye, EyeOff, Plus, Edit2, Trash2, Upload, ExternalLink, X, UserPlus, Target, Award, ChevronDown, ChevronUp, Check, Key, DollarSign, CheckCircle, XCircle, AlertCircle, FileText, Download, Store, Filter, Loader2, Megaphone, Send, Search, Bell, Copy } from 'lucide-react';
 import { initializeApp } from 'firebase/app';
 import { getFirestore, collection, addDoc, updateDoc, deleteDoc, doc, getDocs, getDoc, onSnapshot, serverTimestamp, query, where } from 'firebase/firestore';
 import bcrypt from 'bcryptjs';
@@ -88,6 +88,12 @@ const initializeDatabase = async () => {
     if (settingsSnapshot.empty) {
       await addDoc(collection(db, 'settings'), {
         whatsappMessage: '🏆 *BOLÃO BRASILEIRÃO 2025*\n\n📋 *{RODADA}*\n🎫 *Cartela: {CARTELA}*\n✅ Confirmado!\n\n{PALPITES}\n\n💰 R$ 15,00\n⚠️ *Não pode alterar após pagamento*\n\nBoa sorte! 🍀',
+        chargeMessageTemplate: 'Olá {NOME},\n\nIdentificamos que o pagamento da sua cartela da {RODADA} ainda está pendente.\n\nValor: R$ {VALOR}\nCartela: {CARTELA}\n\nPor favor, conclua o pagamento para validar sua participação no ranking e na premiação. Obrigado! 🙏',
+        devolution: {
+          instanceName: '',
+          link: '',
+          token: ''
+        },
         betValue: 15,
         createdAt: serverTimestamp()
       });
@@ -133,6 +139,7 @@ const AppProvider = ({ children }) => {
   const [predictions, setPredictions] = useState([]);
   const [establishments, setEstablishments] = useState([]);
   const [settings, setSettings] = useState(null);
+  const [communications, setCommunications] = useState([]);
   const [loading, setLoading] = useState(true);
 
   // Sessão persistente com timeout de 10 min e renovação automática
@@ -207,13 +214,14 @@ const AppProvider = ({ children }) => {
     const loadData = async () => {
       try {
         await initializeDatabase();
-        const [u, t, r, p, s, e] = await Promise.all([
+        const [u, t, r, p, s, e, c] = await Promise.all([
           getDocs(collection(db, 'users')),
           getDocs(collection(db, 'teams')),
           getDocs(collection(db, 'rounds')),
           getDocs(collection(db, 'predictions')),
           getDocs(collection(db, 'settings')),
-          getDocs(collection(db, 'establishments'))
+          getDocs(collection(db, 'establishments')),
+          getDocs(collection(db, 'communications'))
         ]);
         setUsers(u.docs.map(d => { const data = d.data(); const { password, ...rest } = data; return { id: d.id, ...rest }; }));
         setTeams(t.docs.map(d => ({ id: d.id, ...d.data() })).sort((a, b) => a.name.localeCompare(b.name)));
@@ -221,6 +229,7 @@ const AppProvider = ({ children }) => {
         setPredictions(p.docs.map(d => ({ id: d.id, ...d.data() })));
         setEstablishments(e.docs.map(d => ({ id: d.id, ...d.data() })));
         setSettings(s.docs.length > 0 ? { id: s.docs[0].id, ...s.docs[0].data() } : null);
+        setCommunications(c.docs.map(d => ({ id: d.id, ...d.data() })));
       } catch (error) {
         console.error('Load error:', error);
       } finally {
@@ -237,7 +246,8 @@ const AppProvider = ({ children }) => {
       onSnapshot(collection(db, 'predictions'), s => setPredictions(s.docs.map(d => ({ id: d.id, ...d.data() })))),
       onSnapshot(collection(db, 'users'), s => setUsers(s.docs.map(d => { const data = d.data(); const { password, ...rest } = data; return { id: d.id, ...rest }; }))),
       onSnapshot(collection(db, 'establishments'), s => setEstablishments(s.docs.map(d => ({ id: d.id, ...d.data() })))),
-      onSnapshot(collection(db, 'settings'), s => setSettings(s.docs.length > 0 ? { id: s.docs[0].id, ...s.docs[0].data() } : null))
+      onSnapshot(collection(db, 'settings'), s => setSettings(s.docs.length > 0 ? { id: s.docs[0].id, ...s.docs[0].data() } : null)),
+      onSnapshot(collection(db, 'communications'), s => setCommunications(s.docs.map(d => ({ id: d.id, ...d.data() }))))
     ];
     return () => uns.forEach(u => u());
   }, []);
@@ -304,7 +314,7 @@ const AppProvider = ({ children }) => {
   };
 
   const value = {
-    currentUser, setCurrentUser, users, teams, rounds, predictions, establishments, settings, loading,
+    currentUser, setCurrentUser, users, teams, rounds, predictions, establishments, settings, communications, loading,
     login, logout,
     addUser: async (d) => {
       const toSave = { ...d };
@@ -418,7 +428,9 @@ const AppProvider = ({ children }) => {
         console.error('Settings ID não encontrado');
         throw new Error('Configurações não inicializadas');
       }
-    }
+    },
+    addCommunication: async (d) => { requireAdmin(); const r = await addDoc(collection(db, 'communications'), { ...d, createdAt: serverTimestamp() }); return { id: r.id, ...d }; },
+    updateCommunication: async (id, d) => { requireAdmin(); return await updateDoc(doc(db, 'communications', id), d); }
   };
 
   return <AppContext.Provider value={value}>{children}</AppContext.Provider>;
@@ -1103,7 +1115,7 @@ const PasswordModal = ({ user, onSave, onCancel }) => {
 };
 
 const AdminPanel = ({ setView }) => {
-  const { currentUser, setCurrentUser, logout, teams, rounds, users, predictions, establishments, settings, addRound, updateRound, deleteRound, addTeam, updateTeam, deleteTeam, updateUser, deleteUser, resetTeamsToSerieA2025, updatePrediction, updateSettings, addEstablishment, updateEstablishment, deleteEstablishment } = useApp();
+  const { currentUser, setCurrentUser, logout, teams, rounds, users, predictions, establishments, settings, communications, addRound, updateRound, deleteRound, addTeam, updateTeam, deleteTeam, updateUser, deleteUser, resetTeamsToSerieA2025, updatePrediction, updateSettings, addEstablishment, updateEstablishment, deleteEstablishment, addCommunication, updateCommunication } = useApp();
   
   console.log('AdminPanel - Settings:', settings);
   
@@ -1120,7 +1132,11 @@ const AdminPanel = ({ setView }) => {
   const [paymentFilter, setPaymentFilter] = useState('all');
   const [establishmentFilter, setEstablishmentFilter] = useState('all');
   const [whatsappMessage, setWhatsappMessage] = useState(settings?.whatsappMessage || '');
+  const [chargeMessageTemplate, setChargeMessageTemplate] = useState(settings?.chargeMessageTemplate || '');
   const [betValue, setBetValue] = useState(settings?.betValue || 15);
+  const [devolutionLink, setDevolutionLink] = useState(settings?.devolution?.link || '');
+  const [devolutionInstance, setDevolutionInstance] = useState(settings?.devolution?.instanceName || '');
+  const [devolutionToken, setDevolutionToken] = useState(settings?.devolution?.token || '');
   const [pdfLoadingRoundId, setPdfLoadingRoundId] = useState(null);
   const [adminPlayerModal, setAdminPlayerModal] = useState(null);
   // Valores padrão para regras, pontuação e desempate (usados se não houver conteúdo salvo)
@@ -1217,6 +1233,16 @@ const AdminPanel = ({ setView }) => {
       console.log('Carregando valor da aposta:', settings.betValue);
       setBetValue(settings.betValue);
     }
+
+    // Charge template
+    if (settings?.chargeMessageTemplate != null) {
+      setChargeMessageTemplate(settings.chargeMessageTemplate);
+    }
+
+    // Devolution API fields
+    setDevolutionLink(settings?.devolution?.link || '');
+    setDevolutionInstance(settings?.devolution?.instanceName || '');
+    setDevolutionToken(settings?.devolution?.token || '');
 
     // Prefill regras/scoring/desempate mesmo sem settings (usando valor efetivo)
     const effectiveBet = settings?.betValue != null ? settings.betValue : (betValue != null ? Number(betValue) : 15);
@@ -1547,11 +1573,304 @@ const AdminPanel = ({ setView }) => {
     setAdminPlayerModal({ round, item, cartela });
   };
 
+  const [isSendingCharges, setIsSendingCharges] = useState(false);
+  const [commsMessage, setCommsMessage] = useState('');
+  const [selectedCommUserId, setSelectedCommUserId] = useState('');
+  const [selectedCommRound, setSelectedCommRound] = useState(null);
+  const [commPaymentFilter, setCommPaymentFilter] = useState('all');
+  const [isSendingMassComms, setIsSendingMassComms] = useState(false);
+  const [selectAllCommUsers, setSelectAllCommUsers] = useState(false);
+  const [commDeadline, setCommDeadline] = useState('');
+  const [commResultsDate, setCommResultsDate] = useState('');
+  const [commPdfUrl, setCommPdfUrl] = useState('');
+  const [commAppLink, setCommAppLink] = useState(typeof window !== 'undefined' ? window.location.origin : '');
+  const [commActiveTab, setCommActiveTab] = useState('envio');
+
+  // Automatiza prazo final (closeAt), divulgação (createdAt) e link de ranking
+  useEffect(() => {
+    try {
+      const round = selectedCommRound ? rounds.find(r => r.id === selectedCommRound) : null;
+      const deadline = formatPtBrFlexible(round?.closeAt) || '';
+      const publish = formatPtBrFlexible(round?.createdAt) || '';
+      const rankingUrl = buildRankingLink(round?.id) || '';
+      setCommDeadline(deadline);
+      setCommResultsDate(publish);
+      setCommPdfUrl(rankingUrl);
+    } catch {}
+  }, [selectedCommRound, rounds, commAppLink]);
+
+  const formatPhoneBR = (phone) => {
+    let formatted = (phone || '').replace(/\D/g, '');
+    if (!formatted.startsWith('55')) formatted = '55' + formatted;
+    return formatted;
+  };
+
+  const formatChargeMessage = (userName, roundName, amount, cartelaCode) => {
+    const tpl = chargeMessageTemplate || 'Olá {NOME},\n\nIdentificamos que o pagamento da sua cartela da {RODADA} ainda está pendente.\n\nValor: R$ {VALOR}\nCartela: {CARTELA}\n\nPor favor, conclua o pagamento para validar sua participação no ranking e na premiação. Obrigado! 🙏';
+    return tpl
+      .replace('{NOME}', userName || '')
+      .replace('{RODADA}', roundName || '')
+      .replace('{VALOR}', Number(amount || settings?.betValue || 15).toFixed(2))
+      .replace('{CARTELA}', cartelaCode || '');
+  };
+
+  // Envia texto via EvolutionAPI
+  const sendTextViaEvolution = async (phoneNumber, text) => {
+    const base = devolutionLink || settings?.devolution?.link;
+    const instance = devolutionInstance || settings?.devolution?.instanceName;
+    const token = devolutionToken || settings?.devolution?.token;
+    if (!base || !instance || !token) {
+      throw new Error('EvolutionAPI não configurada. Defina link, instância e token em Configurações.');
+    }
+    const url = `${base.replace(/\/$/, '')}/message/sendText/${encodeURIComponent(instance)}`;
+    const res = await fetch(url, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'apikey': token
+      },
+      body: JSON.stringify({ number: phoneNumber, text })
+    });
+    if (!res.ok) {
+      const body = await res.text().catch(() => '');
+      throw new Error(`Falha EvolutionAPI: ${res.status} ${body}`);
+    }
+    const data = await res.json().catch(() => null);
+    return data;
+  };
+
+  const sendChargeWhatsApp = async (userId, cartelaCode) => {
+    try {
+      const user = users.find(u => u.id === userId);
+      if (!user?.whatsapp) throw new Error('Usuário sem WhatsApp');
+      const round = rounds.find(r => r.id === selectedFinanceRound);
+      const amount = settings?.betValue || 15;
+      const message = formatChargeMessage(user.name, round?.name, amount, cartelaCode);
+      const phone = formatPhoneBR(user.whatsapp);
+      const result = await sendTextViaEvolution(phone, message);
+
+      if (addCommunication) {
+        await addCommunication({
+          type: 'charge',
+          userId: user.id,
+          roundId: selectedFinanceRound,
+          cartelaCode,
+          amount,
+          message,
+          channel: 'whatsapp',
+          status: 'sent',
+          createdBy: currentUser?.id || null
+        });
+      }
+      alert(`Cobrança enviada para ${user.name}.`);
+    } catch (err) {
+      console.error('Erro ao enviar cobrança:', err);
+      alert('Erro ao iniciar cobrança: ' + err.message);
+      if (addCommunication) {
+        try {
+          await addCommunication({
+            type: 'charge',
+            userId,
+            roundId: selectedFinanceRound,
+            cartelaCode,
+            amount: settings?.betValue || 15,
+            message: 'Falha: ' + (err?.message || 'erro desconhecido'),
+            channel: 'whatsapp',
+            status: 'error',
+            createdBy: currentUser?.id || null
+          });
+        } catch {}
+      }
+    }
+  };
+
+  const sendGeneralCommunication = async () => {
+    try {
+      const user = users.find(u => u.id === selectedCommUserId);
+      if (!user) throw new Error('Selecione um destinatário');
+      if (!user.whatsapp) throw new Error('Destinatário sem WhatsApp');
+      const message = (commsMessage || '').replace('{NOME}', user.name || '');
+      const phone = formatPhoneBR(user.whatsapp);
+      await sendTextViaEvolution(phone, message);
+
+      if (addCommunication) {
+        await addCommunication({
+          type: 'communication',
+          userId: user.id,
+          message,
+          channel: 'whatsapp',
+          status: 'sent',
+          createdBy: currentUser?.id || null
+        });
+      }
+      alert(`Mensagem enviada para ${user.name}.`);
+    } catch (err) {
+      console.error('Erro ao enviar comunicado:', err);
+      alert('Erro ao enviar comunicado: ' + err.message);
+      if (addCommunication && selectedCommUserId) {
+        try {
+          await addCommunication({
+            type: 'communication',
+            userId: selectedCommUserId,
+            message: 'Falha: ' + (err?.message || 'erro desconhecido'),
+            channel: 'whatsapp',
+            status: 'error',
+            createdBy: currentUser?.id || null
+          });
+        } catch {}
+      }
+    }
+  };
+
+  const getCommRecipients = () => {
+    if (!selectedCommRound) return [];
+    const list = getRoundParticipants(selectedCommRound) || [];
+    return list.filter(p => {
+      const u = users.find(x => x.id === p.userId);
+      if (!u?.whatsapp) return false;
+      if (commPaymentFilter === 'paid') return !!p.paid;
+      if (commPaymentFilter === 'pending') return !p.paid;
+      return true;
+    });
+  };
+
+  const sendMassCommunications = async () => {
+    try {
+      const recipients = getCommRecipients();
+      if (!selectedCommRound) throw new Error('Selecione a rodada para filtrar os participantes.');
+      if (!commsMessage) throw new Error('Digite a mensagem a enviar.');
+      if (recipients.length === 0) throw new Error('Nenhum destinatário atende aos filtros.');
+      setIsSendingMassComms(true);
+      let okCount = 0;
+      let failCount = 0;
+      for (const p of recipients) {
+        const user = users.find(u => u.id === p.userId);
+        const msg = (commsMessage || '').replace('{NOME}', user?.name || '');
+        const phone = formatPhoneBR(user.whatsapp);
+        try {
+          await sendTextViaEvolution(phone, msg);
+          okCount++;
+          if (addCommunication) {
+            await addCommunication({ type: 'communication', userId: user.id, roundId: selectedCommRound, message: msg, channel: 'whatsapp', status: 'sent', createdBy: currentUser?.id || null });
+          }
+        } catch (e) {
+          failCount++;
+          if (addCommunication) {
+            try { await addCommunication({ type: 'communication', userId: user.id, roundId: selectedCommRound, message: 'Falha: ' + (e?.message || 'erro'), channel: 'whatsapp', status: 'error', createdBy: currentUser?.id || null }); } catch {}
+          }
+        }
+        await new Promise(r => setTimeout(r, 250));
+      }
+      alert(`Envio concluído: ${okCount} sucesso, ${failCount} falhas.`);
+    } catch (err) {
+      alert('Erro no envio em massa: ' + err.message);
+    } finally {
+      setIsSendingMassComms(false);
+    }
+  };
+
+  const getBrandName = () => (settings?.brandName || 'Bolão Brasileiro 2025');
+
+  // Formata datas vindas como string ISO ou Firestore Timestamp
+  const formatPtBrFlexible = (value) => {
+    try {
+      if (!value) return '';
+      let dt = null;
+      if (value && typeof value.toDate === 'function') dt = value.toDate();
+      else if (value && typeof value === 'object' && typeof value.seconds === 'number') dt = new Date(value.seconds * 1000);
+      else dt = new Date(value);
+      if (isNaN(dt.getTime())) return '';
+      return dt.toLocaleString('pt-BR', { dateStyle: 'short', timeStyle: 'short' });
+    } catch {
+      return '';
+    }
+  };
+
+  const buildRankingLink = (roundId) => {
+    const base = commAppLink || (typeof window !== 'undefined' ? window.location.origin : '');
+    if (!roundId) return base;
+    const url = new URL(base);
+    // Preserva host e esquema, força query para ranking da rodada
+    url.searchParams.set('view', 'user');
+    url.searchParams.set('tab', 'ranking');
+    url.searchParams.set('round', roundId);
+    return url.toString();
+  };
+
+  const buildTemplateText = (key, mode = 'rich') => {
+    const round = selectedCommRound ? rounds.find(r => r.id === selectedCommRound) : null;
+    const roundName = round?.name || 'Rodada';
+    const user = selectedCommUserId ? users.find(u => u.id === selectedCommUserId) : null;
+    const userName = user?.name || '{NOME}';
+    const link = commAppLink || (typeof window !== 'undefined' ? window.location.origin : '');
+    const deadline = formatPtBrFlexible(round?.closeAt) || '{LIMITE}';
+    const publish = formatPtBrFlexible(round?.createdAt) || '{DIVULGACAO}';
+    const ranking = buildRankingLink(round?.id) || '{RANKING_URL}';
+    const brand = getBrandName();
+
+    const templates = {
+      'open-round': {
+        rich: `🔔 ${brand}\n\nA rodada de palpites "${roundName}" está ABERTA!\nAcesse agora e garanta seus palpites: ${link}\n\n${userName}, vamos pra cima! 🏆` ,
+        plain: `AVISO (${brand}): rodada "${roundName}" aberta. Acesse ${link} e registre seus palpites. Incentivo: participe!`
+      },
+      'charge-pending': {
+        rich: `⚠️ ${brand} — Cobrança de palpites pendentes\n\nOlá, ${userName}. Conclua sua regularização até ${deadline}.\nPagamento via PIX: 47415363000\n\nQualquer dúvida, estamos à disposição.`,
+        plain: `COBRANÇA (${brand}): regularize seus palpites até ${deadline}. PIX: 47415363000. Obrigado.`
+      },
+      'round-closed': {
+        rich: `✅ ${brand}\n\nRodada "${roundName}" fechada! Obrigado pela participação de todos.\nBoa sorte! 🍀\nResultados serão divulgados em ${publish}.`,
+        plain: `Rodada "${roundName}" encerrada. Obrigado pela participação. Resultados em ${publish}.`
+      },
+      'final-result': {
+        rich: `📣 ${brand} — Resultado Final\n\nRodada "${roundName}" finalizada! Parabéns aos vencedores!\nVeja o ranking completo: ${ranking}`,
+        plain: `RESULTADO FINAL (${brand}): rodada "${roundName}" finalizada. Ranking: ${ranking}.`
+      }
+    };
+
+    const tpl = templates[key]?.[mode] || '';
+    return tpl
+      .replace('{NOME}', userName)
+      .replace('{RODADA}', roundName)
+      .replace('{LINK}', link)
+      .replace('{LIMITE}', deadline)
+      .replace('{DIVULGACAO}', publish)
+      .replace('{RANKING_URL}', ranking)
+      .replace('{BRAND}', brand);
+  };
+
+  const applyTemplate = (key, mode = 'rich') => {
+    const round = selectedCommRound ? rounds.find(r => r.id === selectedCommRound) : null;
+    if (key === 'final-result') {
+      if (!round || round.status !== 'finished') {
+        alert('Apenas rodadas com status "Finalizada" permitem gerar o Resultado Final.');
+        return;
+      }
+    }
+    const text = buildTemplateText(key, mode);
+    setCommsMessage(text);
+  };
+
+  const copyTemplate = async (key, mode = 'plain') => {
+    try {
+      const text = buildTemplateText(key, mode);
+      await navigator.clipboard.writeText(text);
+      alert('Texto copiado para a área de transferência.');
+    } catch (e) {
+      alert('Não foi possível copiar o texto.');
+    }
+  };
+
   const handleSaveWhatsAppMessage = async () => {
     try {
       const dataToSave = {
         whatsappMessage: whatsappMessage,
-        betValue: parseFloat(betValue)
+        betValue: parseFloat(betValue),
+        chargeMessageTemplate: chargeMessageTemplate,
+        devolution: {
+          link: devolutionLink,
+          instanceName: devolutionInstance,
+          token: devolutionToken
+        }
       };
       
       console.log('Salvando configurações:', dataToSave);
@@ -2502,7 +2821,7 @@ const AdminPanel = ({ setView }) => {
       <div className="bg-white border-b">
         <div className="max-w-7xl mx-auto px-3 sm:px-4">
           <div className="flex gap-3 sm:gap-6 overflow-x-auto -mx-2 px-2 sm:mx-0">
-            {['dashboard', 'rounds', 'teams', 'establishments', 'participants', 'financial', 'settings'].map(tab => (
+            {['dashboard', 'rounds', 'teams', 'establishments', 'participants', 'financial', 'communications', 'settings'].map(tab => (
               <button key={tab} onClick={() => setActiveTab(tab)} className={`py-3 sm:py-4 px-2 text-sm sm:text-base border-b-2 font-medium whitespace-nowrap ${activeTab === tab ? 'border-green-600 text-green-600' : 'border-transparent text-gray-500'}`}>
                 {tab === 'dashboard' && <><Trophy className="inline mr-2" size={18} />Dashboard</>}
                 {tab === 'rounds' && <><Calendar className="inline mr-2" size={18} />Rodadas</>}
@@ -2510,6 +2829,7 @@ const AdminPanel = ({ setView }) => {
                 {tab === 'establishments' && <><Store className="inline mr-2" size={18} />Estabelecimentos</>}
                 {tab === 'participants' && <><TrendingUp className="inline mr-2" size={18} />Participantes</>}
                 {tab === 'financial' && <><DollarSign className="inline mr-2" size={18} />Financeiro</>}
+                {tab === 'communications' && <><Megaphone className="inline mr-2" size={18} />Comunicados</>}
                 {tab === 'settings' && <><Edit2 className="inline mr-2" size={18} />Configurações</>}
               </button>
             ))}
@@ -2986,6 +3306,53 @@ const AdminPanel = ({ setView }) => {
                 </div>
               </div>
 
+              {/* Template de Cobrança (Financeiro) */}
+              <div className="bg-white rounded-xl shadow-sm border p-6">
+                <h3 className="text-lg font-bold mb-4 flex items-center gap-2">
+                  <Megaphone size={24} className="text-green-600" />
+                  Template de Cobrança (WhatsApp)
+                </h3>
+                <p className="text-gray-600 text-sm mb-4">
+                  Mensagem usada para cobrar participantes com pagamento pendente. Suporta variáveis {'{NOME}'}, {'{RODADA}'}, {'{VALOR}'}, {'{CARTELA}'}.
+                </p>
+                <textarea
+                  value={chargeMessageTemplate}
+                  onChange={(e) => setChargeMessageTemplate(e.target.value)}
+                  className="w-full px-4 py-3 border rounded-lg font-mono text-sm"
+                  rows="8"
+                  placeholder={chargeMessageTemplate}
+                />
+                <div className="flex sm:justify-end gap-3 mt-4">
+                  <button onClick={handleSaveWhatsAppMessage} className="w-full sm:w-auto px-6 py-2 bg-green-600 text-white rounded-lg">Salvar Template</button>
+                </div>
+              </div>
+
+              {/* Configuração Devolution API */}
+              <div className="bg-white rounded-xl shadow-sm border p-6">
+                <h3 className="text-lg font-bold mb-4 flex items-center gap-2">
+                  <Key size={24} className="text-green-600" />
+                  Configuração Devolution API
+                </h3>
+                <p className="text-gray-600 text-sm mb-4">Preencha os dados da API para envio de cobranças pelo WhatsApp.</p>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                  <div>
+                    <label className="block text-sm font-medium mb-2">Link base</label>
+                    <input type="text" value={devolutionLink} onChange={(e) => setDevolutionLink(e.target.value)} className="w-full px-4 py-3 border rounded-lg" placeholder="https://api.exemplo.com" />
+                  </div>
+                  <div>
+                    <label className="block text-sm font-medium mb-2">Instance Name</label>
+                    <input type="text" value={devolutionInstance} onChange={(e) => setDevolutionInstance(e.target.value)} className="w-full px-4 py-3 border rounded-lg" placeholder="minha-instancia" />
+                  </div>
+                  <div className="sm:col-span-2">
+                    <label className="block text-sm font-medium mb-2">Token</label>
+                    <input type="text" value={devolutionToken} onChange={(e) => setDevolutionToken(e.target.value)} className="w-full px-4 py-3 border rounded-lg" placeholder="seu-token" />
+                  </div>
+                </div>
+                <div className="flex sm:justify-end gap-3 mt-4">
+                  <button onClick={handleSaveWhatsAppMessage} className="w-full sm:w-auto px-6 py-2 bg-green-600 text-white rounded-lg">Salvar Configuração</button>
+                </div>
+              </div>
+
               {/* Regras do Bolão (Editor com formatação e prévia) */}
               <div className="bg-white rounded-xl shadow-sm border p-6">
                 <h3 className="text-lg font-bold mb-4 flex items-center gap-2">
@@ -3306,10 +3673,10 @@ const AdminPanel = ({ setView }) => {
                     </div>
 
                     {/* Filtros */}
-                    <div className="bg-white rounded-xl shadow-sm border p-4">
-                      <div className="flex flex-col md:flex-row md:items-center md:justify-between flex-wrap gap-3">
-                        <div className="flex flex-wrap items-center gap-2">
-                          <span className="text-sm font-medium text-gray-700">Filtrar:</span>
+                        <div className="bg-white rounded-xl shadow-sm border p-4">
+                          <div className="flex flex-col md:flex-row md:items-center md:justify-between flex-wrap gap-3">
+                            <div className="flex flex-wrap items-center gap-2">
+                              <span className="text-sm font-medium text-gray-700">Filtrar:</span>
                           <button
                             onClick={() => setPaymentFilter('all')}
                             className={`px-3 md:px-4 py-1.5 md:py-2 rounded-lg text-xs md:text-sm font-medium transition ${
@@ -3334,18 +3701,47 @@ const AdminPanel = ({ setView }) => {
                           >
                             Pendentes ({summary.pendingCount})
                           </button>
-                        </div>
-                        
-                        {establishmentFilter !== 'all' && establishmentFilter !== 'none' && (
-                          <div className="bg-orange-50 border border-orange-200 rounded-lg px-3 py-2 w-full md:w-auto md:ml-auto">
-                            <p className="text-xs sm:text-sm text-orange-800">
-                              <Store size={14} className="inline mr-1" />
-                              <strong>Comissão deste estabelecimento:</strong> R$ {summary.establishmentFee.toFixed(2)}
-                            </p>
+                            </div>
+                            
+                            {establishmentFilter !== 'all' && establishmentFilter !== 'none' && (
+                              <div className="bg-orange-50 border border-orange-200 rounded-lg px-3 py-2 w-full md:w-auto md:ml-auto">
+                                <p className="text-xs sm:text-sm text-orange-800">
+                                  <Store size={14} className="inline mr-1" />
+                                  <strong>Comissão deste estabelecimento:</strong> R$ {summary.establishmentFee.toFixed(2)}
+                                </p>
+                              </div>
+                            )}
+                            <div className="w-full md:w-auto md:ml-auto">
+                              {(() => {
+                                const pendingCount = filteredParticipants.filter(p => !p.paid).length;
+                                return (
+                                  <button
+                                    onClick={async () => {
+                                      try {
+                                        setIsSendingCharges(true);
+                                        const toCharge = filteredParticipants.filter(p => !p.paid);
+                                        for (const p of toCharge) {
+                                          await sendChargeWhatsApp(p.userId, p.cartelaCode);
+                                          await new Promise(r => setTimeout(r, 300));
+                                        }
+                                        alert(`Cobranças iniciadas para ${toCharge.length} pendentes.`);
+                                      } catch (err) {
+                                        alert('Erro ao enviar cobranças: ' + err.message);
+                                      } finally {
+                                        setIsSendingCharges(false);
+                                      }
+                                    }}
+                                    disabled={isSendingCharges || pendingCount === 0}
+                                    className={`inline-flex items-center justify-center gap-2 px-3 md:px-4 py-2 rounded-lg text-sm font-semibold ${pendingCount === 0 ? 'bg-gray-200 text-gray-600 cursor-not-allowed' : 'bg-green-600 text-white hover:bg-green-700'} ${isSendingCharges ? 'opacity-75' : ''}`}
+                                    title={pendingCount === 0 ? 'Nenhum participante pendente' : 'Cobrar todos os pendentes via WhatsApp'}
+                                  >
+                                    <Megaphone size={18} /> {isSendingCharges ? 'Enviando...' : `Cobrar pendentes (${pendingCount})`}
+                                  </button>
+                                );
+                              })()}
+                            </div>
                           </div>
-                        )}
-                      </div>
-                    </div>
+                        </div>
 
                     {/* Lista de Cartelas */}
                     <div className="bg-white rounded-xl shadow-sm border overflow-hidden">
@@ -3436,6 +3832,15 @@ const AdminPanel = ({ setView }) => {
                                     >
                                       {participant.paid ? 'Marcar Pendente' : 'Marcar Pago'}
                                     </button>
+                                    {!participant.paid && (
+                                      <button
+                                        onClick={() => sendChargeWhatsApp(participant.userId, participant.cartelaCode)}
+                                        className="ml-2 px-3 py-2 rounded-lg text-sm font-medium bg-blue-600 text-white hover:bg-blue-700 inline-flex items-center gap-1"
+                                        title="Cobrar via WhatsApp"
+                                      >
+                                        <Send size={16} /> Cobrar
+                                      </button>
+                                    )}
                                   </td>
                                 </tr>
                               );
@@ -3453,6 +3858,326 @@ const AdminPanel = ({ setView }) => {
                 <DollarSign className="mx-auto text-gray-400 mb-4" size={48} />
                 <h3 className="text-xl font-semibold mb-2">Selecione uma rodada</h3>
                 <p className="text-gray-500">Escolha uma rodada acima para visualizar os pagamentos</p>
+              </div>
+            )}
+          </div>
+        )}
+
+        {activeTab === 'communications' && (
+          <div>
+            <div className="flex flex-col sm:flex-row sm:justify-between sm:items-center gap-3 mb-6">
+              <div>
+                <h2 className="text-2xl font-bold">Comunicados</h2>
+                <p className="text-gray-600 mt-1">Envie mensagens aos participantes e acompanhe o histórico.</p>
+              </div>
+            </div>
+
+            {/* Sub-abas dentro de Comunicados */}
+            <div role="tablist" aria-label="Seções de Comunicados" className="flex gap-3 border-b mb-6">
+              <button
+                role="tab"
+                aria-selected={commActiveTab === 'envio'}
+                onClick={() => setCommActiveTab('envio')}
+                className={`py-3 px-2 border-b-2 font-medium ${commActiveTab === 'envio' ? 'border-green-600 text-green-600' : 'border-transparent text-gray-500'}`}
+              >
+                <Megaphone className="inline mr-2" size={18} />Envio
+              </button>
+              <button
+                role="tab"
+                aria-selected={commActiveTab === 'historico'}
+                onClick={() => setCommActiveTab('historico')}
+                className={`py-3 px-2 border-b-2 font-medium ${commActiveTab === 'historico' ? 'border-green-600 text-green-600' : 'border-transparent text-gray-500'}`}
+              >
+                <Calendar className="inline mr-2" size={18} />Histórico
+              </button>
+            </div>
+
+            {commActiveTab === 'envio' && (
+              <div className="bg-white rounded-xl shadow-sm border p-6">
+                <h3 className="text-lg font-bold mb-4 flex items-center gap-2">
+                  <Megaphone size={22} className="text-green-600" />
+                  Enviar comunicado
+                </h3>
+                <div className="space-y-4">
+                  {/* Filtros de destinatários por rodada e pagamento */}
+                  <fieldset className="border rounded-lg p-3">
+                    <legend className="text-sm font-semibold text-gray-700">Destinatários</legend>
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mt-2">
+                    <div>
+                      <label className="block text-sm font-medium mb-2">Rodada</label>
+                      <select
+                        value={selectedCommRound || ''}
+                        onChange={(e) => setSelectedCommRound(e.target.value || null)}
+                        className="w-full border rounded-lg p-2 text-sm"
+                      >
+                        <option value="">Selecione uma rodada</option>
+                        {rounds.map(r => (
+                          <option key={r.id} value={r.id}>{r.name}</option>
+                        ))}
+                      </select>
+                      {!selectedCommRound && (
+                        <p id="err-comm-round" className="text-xs text-red-600 mt-1">Selecione uma rodada.</p>
+                      )}
+                    </div>
+                    <div>
+                      <label className="block text-sm font-medium mb-2">Filtro de pagamento</label>
+                      <select
+                        value={commPaymentFilter}
+                        onChange={(e) => setCommPaymentFilter(e.target.value)}
+                        className="w-full border rounded-lg p-2 text-sm"
+                      >
+                        <option value="all">Todos</option>
+                        <option value="paid">Apenas pagos</option>
+                        <option value="pending">Apenas pendentes</option>
+                      </select>
+                    </div>
+                    <div className="mt-3">
+                      <div className="flex items-center justify-between">
+                        <label className="block text-sm font-medium mb-2">Destinatário</label>
+                        <label className="flex items-center gap-2 text-xs">
+                          <input type="checkbox" className="w-4 h-4" checked={selectAllCommUsers} onChange={(e)=>setSelectAllCommUsers(e.target.checked)} aria-label="Selecionar todos os usuários" />
+                          Selecionar todos os usuários
+                        </label>
+                      </div>
+                      <select
+                        value={selectedCommUserId}
+                        onChange={(e) => setSelectedCommUserId(e.target.value)}
+                        disabled={selectAllCommUsers}
+                        className={`w-full border rounded-lg p-2 text-sm ${selectAllCommUsers ? 'bg-gray-100 text-gray-600 cursor-not-allowed' : ''}`}
+                        aria-invalid={!selectAllCommUsers && !selectedCommUserId}
+                        aria-describedby={!selectAllCommUsers && !selectedCommUserId ? 'err-comm-user' : undefined}
+                      >
+                        <option value="">Selecione um participante</option>
+                        {users.filter(u => !u.isAdmin).map(u => (
+                          <option key={u.id} value={u.id}>{u.name} {u.whatsapp ? `• ${u.whatsapp}` : '• sem WhatsApp'}</option>
+                        ))}
+                      </select>
+                      {!selectAllCommUsers && !selectedCommUserId && (
+                        <p id="err-comm-user" className="text-xs text-red-600 mt-1">Selecione um participante ou marque "Selecionar todos".</p>
+                      )}
+                      {selectAllCommUsers && (
+                        <p className="text-xs text-gray-600 mt-1">Total elegíveis pelos filtros: {getCommRecipients().length}</p>
+                      )}
+                    </div>
+                    </div>
+                  </fieldset>
+
+                  
+
+                  <div>
+                    <label className="block text-sm font-medium mb-2">Mensagem</label>
+                    <textarea
+                      value={commsMessage}
+                      onChange={(e) => setCommsMessage(e.target.value)}
+                      rows={6}
+                      placeholder="Use {NOME} para inserir o nome do destinatário"
+                      className="w-full border rounded-lg p-2 font-mono text-sm"
+                      aria-invalid={!commsMessage}
+                      aria-describedby={!commsMessage ? 'err-comm-msg' : undefined}
+                    />
+                    {!commsMessage && (
+                      <p id="err-comm-msg" className="text-xs text-red-600 mt-1">Informe uma mensagem.</p>
+                    )}
+                    <p className="text-xs text-gray-500 mt-2">Variáveis: {'{NOME}'} • Dica: personalize com contexto curto.</p>
+                  </div>
+
+                  {/* Personalização rápida para modelos */}
+                  <div className="bg-gray-50 border rounded-lg p-3">
+                    <p className="text-sm font-medium mb-2">Personalização rápida</p>
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                      <div>
+                        <label className="block text-xs font-medium mb-1">Prazo final (fechamento programado)</label>
+                        <input type="text" value={commDeadline} readOnly disabled placeholder="Selecionar uma rodada" className="w-full border rounded-lg p-2 text-sm bg-gray-100 text-gray-700" />
+                      </div>
+                      <div>
+                        <label className="block text-xs font-medium mb-1">Data divulgação (criação da rodada)</label>
+                        <input type="text" value={commResultsDate} readOnly disabled placeholder="Selecionar uma rodada" className="w-full border rounded-lg p-2 text-sm bg-gray-100 text-gray-700" />
+                      </div>
+                      <div>
+                        <label className="block text-xs font-medium mb-1">Link do sistema</label>
+                        <input type="text" value={commAppLink} onChange={(e)=>setCommAppLink(e.target.value)} placeholder="https://seusistema.com" className="w-full border rounded-lg p-2 text-sm" />
+                      </div>
+                      <div>
+                        <label className="block text-xs font-medium mb-1">Link do ranking (gerado automaticamente)</label>
+                        <input type="text" value={commPdfUrl} readOnly disabled placeholder="Selecionar uma rodada" className="w-full border rounded-lg p-2 text-sm bg-gray-100 text-gray-700" />
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="flex items-center gap-3">
+                    {(() => {
+                      const recipients = getCommRecipients();
+                      const disabled = selectAllCommUsers ? (recipients.length === 0 || !commsMessage || isSendingMassComms) : (!selectedCommUserId || !commsMessage);
+                      const handleClick = () => selectAllCommUsers ? sendMassCommunications() : sendGeneralCommunication();
+                      return (
+                        <>
+                          <button
+                            onClick={handleClick}
+                            disabled={disabled}
+                            className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-semibold ${disabled ? 'bg-gray-200 text-gray-600 cursor-not-allowed' : 'bg-green-600 text-white hover:bg-green-700'}`}
+                          >
+                            {isSendingMassComms && selectAllCommUsers ? (<Loader2 size={18} className="animate-spin" />) : (<Send size={18} />)}
+                            Enviar Mensagem
+                          </button>
+                          <span className="text-xs text-gray-500">{selectAllCommUsers ? `Todos os elegíveis (${recipients.length}) via EvolutionAPI.` : 'Envia via EvolutionAPI e registra no histórico.'}</span>
+                        </>
+                      );
+                    })()}
+                  </div>
+
+                  {/* Envio em massa conforme filtros */}
+                  <div className="mt-2 p-3 bg-gray-50 border rounded-lg">
+                    {(() => {
+                      const recipients = getCommRecipients();
+                      const count = recipients.length;
+                      return (
+                        <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+                          <p className="text-xs sm:text-sm text-gray-700">
+                            Destinatários filtrados: <strong>{count}</strong> {selectedCommRound ? `• ${rounds.find(r => r.id === selectedCommRound)?.name}` : ''}
+                          </p>
+                          <button
+                            onClick={sendMassCommunications}
+                            disabled={count === 0 || !commsMessage || isSendingMassComms}
+                            className={`inline-flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-semibold ${count === 0 || !commsMessage || isSendingMassComms ? 'bg-gray-200 text-gray-600 cursor-not-allowed' : 'bg-green-700 text-white hover:bg-green-800'}`}
+                          >
+                            {isSendingMassComms ? (<Loader2 size={18} className="animate-spin" />) : (<Send size={18} />)}
+                            Enviar para filtrados{count ? ` (${count})` : ''}
+                          </button>
+                        </div>
+                      );
+                    })()}
+                    <p className="text-[11px] text-gray-500 mt-2">Valida WhatsApp e registra cada envio com status.</p>
+                  </div>
+
+                  {/* Modelos (seleção rápida + pré-configurados) */}
+
+                  {/* Modelos prontos */}
+                  <div className="mt-4">
+                    <div className="bg-gradient-to-r from-green-600 to-green-700 text-white p-3 rounded-t-lg">
+                      <h4 className="font-semibold text-sm">Modelos prontos • {settings?.brandName || 'Bolão Brasileiro 2025'}</h4>
+                    </div>
+                    <div className="border rounded-b-lg p-3 bg-white">
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                        {/* Template 1: Rodada Aberta */}
+                        <div
+                          className="border rounded-lg p-3 cursor-pointer hover:bg-gray-50"
+                          onClick={()=>applyTemplate('open-round','rich')}
+                          role="button"
+                          aria-label="Inserir modelo: Aviso de Rodada Aberta"
+                        >
+                          <div className="flex items-center gap-2 mb-2">
+                            <Bell className="text-green-600" size={18} />
+                            <span className="text-sm font-semibold">Aviso de Rodada Aberta</span>
+                          </div>
+                          <p className="text-xs text-gray-600 mb-3">Notifica abertura da rodada com link e incentivo.</p>
+                          <div className="flex items-center gap-2">
+                            <button onClick={(e)=>{ e.stopPropagation(); applyTemplate('open-round','rich'); }} className="px-3 py-2 bg-green-600 text-white rounded-lg text-xs hover:bg-green-700 inline-flex items-center gap-1"><Send size={14}/> Inserir</button>
+                            <button onClick={(e)=>{ e.stopPropagation(); copyTemplate('open-round','plain'); }} className="px-3 py-2 bg-gray-100 text-gray-800 rounded-lg text-xs inline-flex items-center gap-1 hover:bg-gray-200"><Copy size={14}/> Copiar texto puro</button>
+                          </div>
+                        </div>
+
+                        {/* Template 2: Cobrança de Palpites Pendentes */}
+                        <div
+                          className="border rounded-lg p-3 cursor-pointer hover:bg-gray-50"
+                          onClick={()=>applyTemplate('charge-pending','rich')}
+                          role="button"
+                          aria-label="Inserir modelo: Cobrança de Palpites Pendentes"
+                        >
+                          <div className="flex items-center gap-2 mb-2">
+                            <AlertCircle className="text-orange-600" size={18} />
+                            <span className="text-sm font-semibold">Cobrança de Palpites Pendentes</span>
+                          </div>
+                          <p className="text-xs text-gray-600 mb-3">Prazo e instruções de pagamento via PIX: 47415363000.</p>
+                          <div className="flex items-center gap-2">
+                            <button onClick={(e)=>{ e.stopPropagation(); applyTemplate('charge-pending','rich'); }} className="px-3 py-2 bg-green-600 text-white rounded-lg text-xs hover:bg-green-700 inline-flex items-center gap-1"><Send size={14}/> Inserir</button>
+                            <button onClick={(e)=>{ e.stopPropagation(); copyTemplate('charge-pending','plain'); }} className="px-3 py-2 bg-gray-100 text-gray-800 rounded-lg text-xs inline-flex items-center gap-1 hover:bg-gray-200"><Copy size={14}/> Copiar texto puro</button>
+                          </div>
+                        </div>
+
+                        {/* Template 3: Rodada Fechada */}
+                        <div
+                          className="border rounded-lg p-3 cursor-pointer hover:bg-gray-50"
+                          onClick={()=>applyTemplate('round-closed','rich')}
+                          role="button"
+                          aria-label="Inserir modelo: Aviso de Rodada Fechada"
+                        >
+                          <div className="flex items-center gap-2 mb-2">
+                            <CheckCircle className="text-blue-600" size={18} />
+                            <span className="text-sm font-semibold">Aviso de Rodada Fechada</span>
+                          </div>
+                          <p className="text-xs text-gray-600 mb-3">Agradecimento, boa sorte e data de divulgação.</p>
+                          <div className="flex items-center gap-2">
+                            <button onClick={(e)=>{ e.stopPropagation(); applyTemplate('round-closed','rich'); }} className="px-3 py-2 bg-green-600 text-white rounded-lg text-xs hover:bg-green-700 inline-flex items-center gap-1"><Send size={14}/> Inserir</button>
+                            <button onClick={(e)=>{ e.stopPropagation(); copyTemplate('round-closed','plain'); }} className="px-3 py-2 bg-gray-100 text-gray-800 rounded-lg text-xs inline-flex items-center gap-1 hover:bg-gray-200"><Copy size={14}/> Copiar texto puro</button>
+                          </div>
+                        </div>
+
+                        {/* Template 4: Resultado Final */}
+                        <div
+                          className={`border rounded-lg p-3 ${((selectedCommRound && rounds.find(r => r.id === selectedCommRound)?.status === 'finished')) ? 'cursor-pointer hover:bg-gray-50' : 'opacity-60 cursor-not-allowed'}`}
+                          onClick={()=>{ const ok = !!(selectedCommRound && rounds.find(r => r.id === selectedCommRound)?.status === 'finished'); if (ok) applyTemplate('final-result','rich'); }}
+                          role="button"
+                          aria-label="Inserir modelo: Resultado Final"
+                          aria-disabled={!((selectedCommRound && rounds.find(r => r.id === selectedCommRound)?.status === 'finished'))}
+                        >
+                          <div className="flex items-center gap-2 mb-2">
+                            <FileText className="text-purple-600" size={18} />
+                            <span className="text-sm font-semibold">Resultado Final</span>
+                          </div>
+                          <p className="text-xs text-gray-600 mb-3">Encerramento formal, reconhecimento e link de PDF.</p>
+                          <div className="flex items-center gap-2">
+                            <button onClick={(e)=>{ e.stopPropagation(); applyTemplate('final-result','rich'); }} disabled={!((selectedCommRound && rounds.find(r => r.id === selectedCommRound)?.status === 'finished'))} className={`px-3 py-2 rounded-lg text-xs inline-flex items-center gap-1 ${((selectedCommRound && rounds.find(r => r.id === selectedCommRound)?.status === 'finished')) ? 'bg-green-600 text-white hover:bg-green-700' : 'bg-gray-200 text-gray-600 cursor-not-allowed'}`}><Send size={14}/> Inserir</button>
+                            <button onClick={(e)=>{ e.stopPropagation(); copyTemplate('final-result','plain'); }} disabled={!((selectedCommRound && rounds.find(r => r.id === selectedCommRound)?.status === 'finished'))} className={`px-3 py-2 rounded-lg text-xs inline-flex items-center gap-1 ${((selectedCommRound && rounds.find(r => r.id === selectedCommRound)?.status === 'finished')) ? 'bg-gray-100 text-gray-800 hover:bg-gray-200' : 'bg-gray-200 text-gray-500 cursor-not-allowed'}`}><Copy size={14}/> Copiar texto puro</button>
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            )}
+            {commActiveTab === 'historico' && (
+              <div className="bg-white rounded-xl shadow-sm border p-6">
+                <h3 className="text-lg font-bold mb-4 flex items-center gap-2">
+                  <Calendar size={22} className="text-green-600" />
+                  Histórico de comunicados
+                </h3>
+                {communications && communications.length > 0 ? (
+                  <div className="overflow-auto max-h-[28rem]">
+                    <table className="w-full text-sm">
+                      <thead>
+                        <tr className="bg-gray-50">
+                          <th className="px-4 py-2 text-left">Data</th>
+                          <th className="px-4 py-2 text-left">Tipo</th>
+                          <th className="px-4 py-2 text-left">Participante</th>
+                          <th className="px-4 py-2 text-left">Canal</th>
+                          <th className="px-4 py-2 text-left">Status</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {communications.slice().reverse().map((c) => {
+                          const u = users.find(x => x.id === c.userId);
+                          const ts = c.createdAt && c.createdAt.seconds ? new Date(c.createdAt.seconds * 1000) : null;
+                          const dateStr = ts ? ts.toLocaleString('pt-BR') : '-';
+                          return (
+                            <tr key={c.id} className="border-t">
+                              <td className="px-4 py-2">{dateStr}</td>
+                              <td className="px-4 py-2">{c.type}</td>
+                              <td className="px-4 py-2">{u ? u.name : c.userId || '-'}</td>
+                              <td className="px-4 py-2">{c.channel || '-'}</td>
+                              <td className="px-4 py-2">{c.status || '-'}</td>
+                            </tr>
+                          );
+                        })}
+                      </tbody>
+                    </table>
+                  </div>
+                ) : (
+                  <div className="p-8 text-center border-2 border-dashed rounded-lg">
+                    <Megaphone className="mx-auto text-gray-400 mb-4" size={36} />
+                    <p className="text-gray-600">Nenhum comunicado registrado ainda</p>
+                  </div>
+                )}
               </div>
             )}
           </div>
@@ -3563,6 +4288,18 @@ const UserPanel = ({ setView }) => {
   const [showEstablishmentModal, setShowEstablishmentModal] = useState(false);
   const [showRulesModal, setShowRulesModal] = useState(false);
   const [cartelaDetails, setCartelaDetails] = useState(null);
+
+  // Deep-link para ranking: ?view=user&tab=ranking&round=<id>
+  useEffect(() => {
+    try {
+      if (typeof window === 'undefined') return;
+      const params = new URLSearchParams(window.location.search);
+      const tab = params.get('tab');
+      const roundId = params.get('round');
+      if (tab === 'ranking') setActiveTab('ranking');
+      if (roundId) setSelectedRankingRound(roundId);
+    } catch {}
+  }, []);
 
   const toggleRound = (roundId) => {
     setExpandedRounds(prev => ({ ...prev, [roundId]: !prev[roundId] }));
