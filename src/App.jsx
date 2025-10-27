@@ -1616,27 +1616,36 @@ const AdminPanel = ({ setView }) => {
 
   // Envia texto via EvolutionAPI
   const sendTextViaEvolution = async (phoneNumber, text) => {
-    const base = devolutionLink || settings?.devolution?.link;
-    const instance = devolutionInstance || settings?.devolution?.instanceName;
+    let base = devolutionLink || settings?.devolution?.link;
+    let instance = devolutionInstance || settings?.devolution?.instanceName;
     const token = devolutionToken || settings?.devolution?.token;
     if (!base || !instance || !token) {
       throw new Error('EvolutionAPI não configurada. Defina link, instância e token em Configurações.');
     }
-    const url = `${base.replace(/\/$/, '')}/message/sendText/${encodeURIComponent(instance)}`;
-    const res = await fetch(url, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'apikey': token
-      },
-      body: JSON.stringify({ number: phoneNumber, text })
-    });
-    if (!res.ok) {
-      const body = await res.text().catch(() => '');
-      throw new Error(`Falha EvolutionAPI: ${res.status} ${body}`);
+    // Sanitização: remover espaços, barras/ pontos finais, e forçar HTTPS
+    base = (base || '').trim().replace(/\/$/, '').replace(/\.$/, '');
+    instance = (instance || '').trim().replace(/\.$/, '');
+    if (base.startsWith('http://')) base = 'https://' + base.slice(7);
+    const url = `${base}/message/sendText/${encodeURIComponent(instance)}`;
+    try {
+      const res = await fetch(url, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'apikey': token
+        },
+        body: JSON.stringify({ number: phoneNumber, text })
+      });
+      if (!res.ok) {
+        const body = await res.text().catch(() => '');
+        throw new Error(`Falha EvolutionAPI: ${res.status} ${body}`);
+      }
+      const data = await res.json().catch(() => null);
+      return data;
+    } catch (err) {
+      // Ajuda a identificar CSP/mixed content ou DNS
+      throw new Error(`Falha ao conectar à EvolutionAPI (${url}). Verifique se o link usa HTTPS e se o domínio está permitido em connect-src. Detalhe: ${err?.message || 'erro de rede'}`);
     }
-    const data = await res.json().catch(() => null);
-    return data;
   };
 
   const sendChargeWhatsApp = async (userId, cartelaCode) => {
