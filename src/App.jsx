@@ -1622,29 +1622,54 @@ const AdminPanel = ({ setView }) => {
     if (!base || !instance || !token) {
       throw new Error('EvolutionAPI não configurada. Defina link, instância e token em Configurações.');
     }
-    // Sanitização: remover espaços, barras/ pontos finais, e forçar HTTPS
-    base = (base || '').trim().replace(/\/$/, '').replace(/\.$/, '');
-    instance = (instance || '').trim().replace(/\.$/, '');
-    if (base.startsWith('http://')) base = 'https://' + base.slice(7);
-    const url = `${base}/message/sendText/${encodeURIComponent(instance)}`;
+
+    // Decide caminho: proxy em produção (evita erro de certificado no navegador), direto no DEV
+    const isBrowser = typeof window !== 'undefined';
+    const host = isBrowser ? window.location.hostname : '';
+    const isLocal = /^(localhost|127\.0\.0\.1)$/.test(host);
+    const useProxy = isBrowser && !isLocal;
+
+    // Sanitização: remover espaços, barras/ pontos finais, e forçar HTTPS (para chamada direta)
+    let cleanBase = (base || '').trim().replace(/\/$/, '').replace(/\.$/, '');
+    let cleanInstance = (instance || '').trim().replace(/\.$/, '');
+    if (cleanBase.startsWith('http://')) cleanBase = 'https://' + cleanBase.slice(7);
+
+    const directUrl = `${cleanBase}/message/sendText/${encodeURIComponent(cleanInstance)}`;
+
     try {
-      const res = await fetch(url, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'apikey': token
-        },
-        body: JSON.stringify({ number: phoneNumber, text })
-      });
-      if (!res.ok) {
-        const body = await res.text().catch(() => '');
-        throw new Error(`Falha EvolutionAPI: ${res.status} ${body}`);
+      if (useProxy) {
+        // Usa função serverless para contornar TLS inválido no cliente
+        const res = await fetch('/api/evolution/sendText', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ number: phoneNumber, text, link: base, instance, token })
+        });
+        if (!res.ok) {
+          const body = await res.text().catch(() => '');
+          throw new Error(`Falha EvolutionAPI via proxy: ${res.status} ${body}`);
+        }
+        const data = await res.json().catch(() => null);
+        return data;
+      } else {
+        // Chamado diretamente no DEV
+        const res = await fetch(directUrl, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'apikey': token
+          },
+          body: JSON.stringify({ number: phoneNumber, text })
+        });
+        if (!res.ok) {
+          const body = await res.text().catch(() => '');
+          throw new Error(`Falha EvolutionAPI: ${res.status} ${body}`);
+        }
+        const data = await res.json().catch(() => null);
+        return data;
       }
-      const data = await res.json().catch(() => null);
-      return data;
     } catch (err) {
-      // Ajuda a identificar CSP/mixed content ou DNS
-      throw new Error(`Falha ao conectar à EvolutionAPI (${url}). Verifique se o link usa HTTPS e se o domínio está permitido em connect-src. Detalhe: ${err?.message || 'erro de rede'}`);
+      const target = useProxy ? 'via proxy /api' : directUrl;
+      throw new Error(`Falha ao conectar à EvolutionAPI (${target}). Verifique o host, HTTPS e CSP. Detalhe: ${err?.message || 'erro de rede'}`);
     }
   };
 
