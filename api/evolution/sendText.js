@@ -1,0 +1,52 @@
+// Vercel Serverless Function to proxy EvolutionAPI sendText (ESM)
+// Notes:
+// - Reads link, instance, token from request body (as currently configured on the client)
+// - Sanitizes URL parts and posts to EvolutionAPI
+// - Uses https.Agent with rejectUnauthorized: false to tolerate self-signed/invalid certs
+//   This is a temporary workaround. Prefer fixing TLS with a valid certificate.
+
+import https from 'https';
+import axios from 'axios';
+
+export default async function handler(req, res) {
+  if (req.method !== 'POST') {
+    res.status(405).json({ error: 'Method not allowed' });
+    return;
+  }
+
+  try {
+    const { number, text, link, instance, token } = req.body || {};
+    if (!number || !text) {
+      res.status(400).json({ error: 'Missing required fields: number, text' });
+      return;
+    }
+    if (!link || !instance || !token) {
+      res.status(400).json({ error: 'EvolutionAPI not configured: link, instance, token required' });
+      return;
+    }
+
+    // Sanitize and build URL
+    let base = String(link || '').trim().replace(/\/$/, '').replace(/\.$/, '');
+    let inst = String(instance || '').trim().replace(/\.$/, '');
+    if (base.startsWith('http://')) base = 'https://' + base.slice(7);
+    const url = `${base}/message/sendText/${encodeURIComponent(inst)}`;
+
+    // Agent to tolerate invalid certs (temporary workaround)
+    const agent = new https.Agent({ rejectUnauthorized: false });
+
+    const response = await axios.post(
+      url,
+      { number, text },
+      {
+        headers: { 'Content-Type': 'application/json', apikey: token },
+        httpsAgent: agent,
+        timeout: 15000,
+      }
+    );
+
+    res.status(200).json(response.data || { ok: true });
+  } catch (err) {
+    const msg = err?.response?.data || err?.message || 'request failed';
+    res.status(502).json({ error: 'EvolutionAPI request failed', detail: msg });
+  }
+}
