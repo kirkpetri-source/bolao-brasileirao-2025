@@ -28,11 +28,25 @@ export default async function handler(req, res) {
     // Sanitize and build URL
     let base = String(link || '').trim().replace(/\/$/, '').replace(/\.$/, '');
     let inst = String(instance || '').trim().replace(/\.$/, '');
-    if (base.startsWith('http://')) base = 'https://' + base.slice(7);
+
+    const allowHttp = process.env.EVOLUTION_ALLOW_HTTP_UPSTREAM === 'true';
+    const isHttps = base.startsWith('https://');
+    const isHttp = base.startsWith('http://');
+
+    // If protocol not provided, default based on flag
+    if (!isHttps && !isHttp) {
+      base = (allowHttp ? 'http://' : 'https://') + base;
+    }
+    // If HTTP requested but not allowed, block explicitly (keeps prod safe by default)
+    if (base.startsWith('http://') && !allowHttp) {
+      res.status(400).json({ error: 'HTTP upstream disabled', detail: 'Enable EVOLUTION_ALLOW_HTTP_UPSTREAM=true to allow http upstream links' });
+      return;
+    }
+
     const url = `${base}/message/sendText/${encodeURIComponent(inst)}`;
 
-    // Agent to tolerate invalid certs (temporary workaround)
-    const agent = new https.Agent({ rejectUnauthorized: false });
+    // Agent to tolerate invalid certs (temporary workaround) only for HTTPS
+    const agent = base.startsWith('https://') ? new https.Agent({ rejectUnauthorized: false }) : undefined;
 
     const MAX_ATTEMPTS = 3;
     const SLEEP_MS = 600;
@@ -43,10 +57,10 @@ export default async function handler(req, res) {
           url,
           { number, text },
           {
-            headers: { 'Content-Type': 'application/json', apikey: token },
-            httpsAgent: agent,
-            timeout: 15000,
-          }
+        headers: { 'Content-Type': 'application/json', apikey: token },
+        httpsAgent: agent,
+        timeout: 15000,
+      }
         );
         return res.status(200).json(response.data || { ok: true, attempt });
       } catch (err) {
