@@ -34,17 +34,35 @@ export default async function handler(req, res) {
     // Agent to tolerate invalid certs (temporary workaround)
     const agent = new https.Agent({ rejectUnauthorized: false });
 
-    const response = await axios.post(
-      url,
-      { number, text },
-      {
-        headers: { 'Content-Type': 'application/json', apikey: token },
-        httpsAgent: agent,
-        timeout: 15000,
+    const MAX_ATTEMPTS = 3;
+    const SLEEP_MS = 600;
+    let lastErr = null;
+    for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
+      try {
+        const response = await axios.post(
+          url,
+          { number, text },
+          {
+            headers: { 'Content-Type': 'application/json', apikey: token },
+            httpsAgent: agent,
+            timeout: 15000,
+          }
+        );
+        return res.status(200).json(response.data || { ok: true, attempt });
+      } catch (err) {
+        lastErr = err;
+        const status = err?.response?.status;
+        const code = err?.code;
+        const retriable = status === 502 || status === 503 || status === 504 || ['ECONNRESET','ENOTFOUND','ECONNREFUSED','ETIMEDOUT'].includes(code);
+        if (attempt < MAX_ATTEMPTS && retriable) {
+          await new Promise(r => setTimeout(r, SLEEP_MS));
+          continue;
+        }
+        break;
       }
-    );
-
-    res.status(200).json(response.data || { ok: true });
+    }
+    const msg = lastErr?.response?.data || lastErr?.message || 'request failed';
+    res.status(502).json({ error: 'EvolutionAPI request failed', detail: msg });
   } catch (err) {
     const msg = err?.response?.data || err?.message || 'request failed';
     res.status(502).json({ error: 'EvolutionAPI request failed', detail: msg });
