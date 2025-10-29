@@ -1632,7 +1632,6 @@ const AdminPanel = ({ setView }) => {
     // Sanitização: remover espaços, barras/ pontos finais, e forçar HTTPS (para chamada direta)
     let cleanBase = (base || '').trim().replace(/\/$/, '').replace(/\.$/, '');
     let cleanInstance = (instance || '').trim().replace(/\.$/, '');
-    if (cleanBase.startsWith('http://')) cleanBase = 'https://' + cleanBase.slice(7);
 
     const directUrl = `${cleanBase}/message/sendText/${encodeURIComponent(cleanInstance)}`;
 
