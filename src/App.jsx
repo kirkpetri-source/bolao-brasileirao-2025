@@ -4,6 +4,7 @@ import { initializeApp } from 'firebase/app';
 import { getFirestore, collection, addDoc, updateDoc, deleteDoc, doc, getDocs, getDoc, onSnapshot, serverTimestamp, query, where } from 'firebase/firestore';
 import bcrypt from 'bcryptjs';
 import { jsPDF } from 'jspdf';
+import { MESSAGE_TEMPLATES, TEMPLATE_CATEGORIES, buildTemplateText as buildTemplateTextUtil, validateMessageTags, normalizeTags } from './utils/messageTemplates.js';
 
 const firebaseConfig = {
   apiKey: "AIzaSyAZkL5Q4g1tAAVIZP4mhL6EyjLywjmyfX4",
@@ -1574,7 +1575,8 @@ const AdminPanel = ({ setView }) => {
   };
 
   const [isSendingCharges, setIsSendingCharges] = useState(false);
-  const [commsMessage, setCommsMessage] = useState('');
+const [commsMessage, setCommsMessage] = useState('');
+const [commSelectedTemplateKey, setCommSelectedTemplateKey] = useState('');
   const [selectedCommUserId, setSelectedCommUserId] = useState('');
   const [selectedCommRound, setSelectedCommRound] = useState(null);
   const [commPaymentFilter, setCommPaymentFilter] = useState('all');
@@ -1830,7 +1832,7 @@ const AdminPanel = ({ setView }) => {
     return url.toString();
   };
 
-  const buildTemplateText = (key, mode = 'rich') => {
+  const getTemplateContext = () => {
     const round = selectedCommRound ? rounds.find(r => r.id === selectedCommRound) : null;
     const roundName = round?.name || 'Rodada';
     const user = selectedCommUserId ? users.find(u => u.id === selectedCommUserId) : null;
@@ -1840,35 +1842,12 @@ const AdminPanel = ({ setView }) => {
     const publish = formatPtBrFlexible(round?.createdAt) || '{DIVULGACAO}';
     const ranking = buildRankingLink(round?.id) || '{RANKING_URL}';
     const brand = getBrandName();
+    return { roundName, userName, link, deadline, publish, ranking, brand };
+  };
 
-    const templates = {
-      'open-round': {
-        rich: `🔔 ${brand}\n\nA rodada de palpites "${roundName}" está ABERTA!\nAcesse agora e garanta seus palpites: ${link}\n\n${userName}, vamos pra cima! 🏆` ,
-        plain: `AVISO (${brand}): rodada "${roundName}" aberta. Acesse ${link} e registre seus palpites. Incentivo: participe!`
-      },
-      'charge-pending': {
-        rich: `⚠️ ${brand} — Cobrança de palpites pendentes\n\nOlá, ${userName}. Conclua sua regularização até ${deadline}.\nPagamento via PIX: 47415363000\n\nQualquer dúvida, estamos à disposição.`,
-        plain: `COBRANÇA (${brand}): regularize seus palpites até ${deadline}. PIX: 47415363000. Obrigado.`
-      },
-      'round-closed': {
-        rich: `✅ ${brand}\n\nRodada "${roundName}" fechada! Obrigado pela participação de todos.\nBoa sorte! 🍀\nResultados serão divulgados em ${publish}.`,
-        plain: `Rodada "${roundName}" encerrada. Obrigado pela participação. Resultados em ${publish}.`
-      },
-      'final-result': {
-        rich: `📣 ${brand} — Resultado Final\n\nRodada "${roundName}" finalizada! Parabéns aos vencedores!\nVeja o ranking completo: ${ranking}`,
-        plain: `RESULTADO FINAL (${brand}): rodada "${roundName}" finalizada. Ranking: ${ranking}.`
-      }
-    };
-
-    const tpl = templates[key]?.[mode] || '';
-    return tpl
-      .replace('{NOME}', userName)
-      .replace('{RODADA}', roundName)
-      .replace('{LINK}', link)
-      .replace('{LIMITE}', deadline)
-      .replace('{DIVULGACAO}', publish)
-      .replace('{RANKING_URL}', ranking)
-      .replace('{BRAND}', brand);
+  const buildTemplateText = (key, mode = 'rich') => {
+    const context = getTemplateContext();
+    return buildTemplateTextUtil(key, mode, context);
   };
 
   const applyTemplate = (key, mode = 'rich') => {
@@ -1881,6 +1860,7 @@ const AdminPanel = ({ setView }) => {
     }
     const text = buildTemplateText(key, mode);
     setCommsMessage(text);
+    setCommSelectedTemplateKey(key);
   };
 
   const copyTemplate = async (key, mode = 'plain') => {
@@ -4012,6 +3992,28 @@ const AdminPanel = ({ setView }) => {
                       <p id="err-comm-msg" className="text-xs text-red-600 mt-1">Informe uma mensagem.</p>
                     )}
                     <p className="text-xs text-gray-500 mt-2">Variáveis: {'{NOME}'} • Dica: personalize com contexto curto.</p>
+                    {(() => {
+                      const context = getTemplateContext();
+                      const { unknownTags, missingTags } = validateMessageTags(commsMessage || '', context);
+                      const hasIssues = (unknownTags.length + missingTags.length) > 0;
+                      if (!hasIssues) return null;
+                      return (
+                        <div className="mt-2 p-2 border rounded-lg bg-yellow-50 text-yellow-800 text-xs">
+                          {unknownTags.length > 0 && (
+                            <p><strong>Tags desconhecidas:</strong> {unknownTags.join(', ')}</p>
+                          )}
+                          {missingTags.length > 0 && (
+                            <p><strong>Tags sem valor no contexto:</strong> {missingTags.join(', ')}</p>
+                          )}
+                          <div className="mt-2">
+                            <button
+                              onClick={() => setCommsMessage(normalizeTags(commsMessage || ''))}
+                              className="px-3 py-1 rounded bg-yellow-600 text-white hover:bg-yellow-700"
+                            >Corrigir tags</button>
+                          </div>
+                        </div>
+                      );
+                    })()}
                   </div>
 
                   {/* Personalização rápida para modelos */}
@@ -4084,86 +4086,69 @@ const AdminPanel = ({ setView }) => {
 
                   {/* Modelos (seleção rápida + pré-configurados) */}
 
-                  {/* Modelos prontos */}
+                  {/* Modelos: dropdown categorizado com preview e ações */}
                   <div className="mt-4">
                     <div className="bg-gradient-to-r from-green-600 to-green-700 text-white p-3 rounded-t-lg">
-                      <h4 className="font-semibold text-sm">Modelos prontos • {settings?.brandName || 'Bolão Brasileiro 2025'}</h4>
+                      <h4 className="font-semibold text-sm">Modelos • {settings?.brandName || 'Bolão Brasileiro 2025'}</h4>
                     </div>
                     <div className="border rounded-b-lg p-3 bg-white">
-                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                        {/* Template 1: Rodada Aberta */}
-                        <div
-                          className="border rounded-lg p-3 cursor-pointer hover:bg-gray-50"
-                          onClick={()=>applyTemplate('open-round','rich')}
-                          role="button"
-                          aria-label="Inserir modelo: Aviso de Rodada Aberta"
-                        >
-                          <div className="flex items-center gap-2 mb-2">
-                            <Bell className="text-green-600" size={18} />
-                            <span className="text-sm font-semibold">Aviso de Rodada Aberta</span>
-                          </div>
-                          <p className="text-xs text-gray-600 mb-3">Notifica abertura da rodada com link e incentivo.</p>
-                          <div className="flex items-center gap-2">
-                            <button onClick={(e)=>{ e.stopPropagation(); applyTemplate('open-round','rich'); }} className="px-3 py-2 bg-green-600 text-white rounded-lg text-xs hover:bg-green-700 inline-flex items-center gap-1"><Send size={14}/> Inserir</button>
-                            <button onClick={(e)=>{ e.stopPropagation(); copyTemplate('open-round','plain'); }} className="px-3 py-2 bg-gray-100 text-gray-800 rounded-lg text-xs inline-flex items-center gap-1 hover:bg-gray-200"><Copy size={14}/> Copiar texto puro</button>
-                          </div>
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 items-end">
+                        <div>
+                          <label className="block text-xs font-medium mb-2">Seleção de modelo</label>
+                          <select
+                            value={commSelectedTemplateKey}
+                            onChange={(e) => {
+                              const key = e.target.value;
+                              setCommSelectedTemplateKey(key);
+                              if (key) {
+                                const text = buildTemplateText(key, 'rich');
+                                setCommsMessage(text);
+                              }
+                            }}
+                            className="w-full border rounded-lg p-2 text-sm"
+                          >
+                            <option value="">Selecione um modelo</option>
+                            {TEMPLATE_CATEGORIES.map(cat => (
+                              <optgroup key={cat.label} label={cat.label}>
+                                {cat.items.map(item => {
+                                  const plainPreview = buildTemplateText(item.key, 'plain');
+                                  const isFinal = item.key === 'final-result';
+                                  const round = selectedCommRound ? rounds.find(r => r.id === selectedCommRound) : null;
+                                  const disabled = isFinal && (!round || round.status !== 'finished');
+                                  return (
+                                    <option key={item.key} value={item.key} title={plainPreview.slice(0, 120)} disabled={disabled}>
+                                      {item.label}{disabled ? ' (indisponível)' : ''}
+                                    </option>
+                                  );
+                                })}
+                              </optgroup>
+                            ))}
+                          </select>
+                          <p className="text-[11px] text-gray-500 mt-1">Passe o mouse nas opções para ver a prévia curta.</p>
                         </div>
-
-                        {/* Template 2: Cobrança de Palpites Pendentes */}
-                        <div
-                          className="border rounded-lg p-3 cursor-pointer hover:bg-gray-50"
-                          onClick={()=>applyTemplate('charge-pending','rich')}
-                          role="button"
-                          aria-label="Inserir modelo: Cobrança de Palpites Pendentes"
-                        >
-                          <div className="flex items-center gap-2 mb-2">
-                            <AlertCircle className="text-orange-600" size={18} />
-                            <span className="text-sm font-semibold">Cobrança de Palpites Pendentes</span>
-                          </div>
-                          <p className="text-xs text-gray-600 mb-3">Prazo e instruções de pagamento via PIX: 47415363000.</p>
-                          <div className="flex items-center gap-2">
-                            <button onClick={(e)=>{ e.stopPropagation(); applyTemplate('charge-pending','rich'); }} className="px-3 py-2 bg-green-600 text-white rounded-lg text-xs hover:bg-green-700 inline-flex items-center gap-1"><Send size={14}/> Inserir</button>
-                            <button onClick={(e)=>{ e.stopPropagation(); copyTemplate('charge-pending','plain'); }} className="px-3 py-2 bg-gray-100 text-gray-800 rounded-lg text-xs inline-flex items-center gap-1 hover:bg-gray-200"><Copy size={14}/> Copiar texto puro</button>
-                          </div>
-                        </div>
-
-                        {/* Template 3: Rodada Fechada */}
-                        <div
-                          className="border rounded-lg p-3 cursor-pointer hover:bg-gray-50"
-                          onClick={()=>applyTemplate('round-closed','rich')}
-                          role="button"
-                          aria-label="Inserir modelo: Aviso de Rodada Fechada"
-                        >
-                          <div className="flex items-center gap-2 mb-2">
-                            <CheckCircle className="text-blue-600" size={18} />
-                            <span className="text-sm font-semibold">Aviso de Rodada Fechada</span>
-                          </div>
-                          <p className="text-xs text-gray-600 mb-3">Agradecimento, boa sorte e data de divulgação.</p>
-                          <div className="flex items-center gap-2">
-                            <button onClick={(e)=>{ e.stopPropagation(); applyTemplate('round-closed','rich'); }} className="px-3 py-2 bg-green-600 text-white rounded-lg text-xs hover:bg-green-700 inline-flex items-center gap-1"><Send size={14}/> Inserir</button>
-                            <button onClick={(e)=>{ e.stopPropagation(); copyTemplate('round-closed','plain'); }} className="px-3 py-2 bg-gray-100 text-gray-800 rounded-lg text-xs inline-flex items-center gap-1 hover:bg-gray-200"><Copy size={14}/> Copiar texto puro</button>
-                          </div>
-                        </div>
-
-                        {/* Template 4: Resultado Final */}
-                        <div
-                          className={`border rounded-lg p-3 ${((selectedCommRound && rounds.find(r => r.id === selectedCommRound)?.status === 'finished')) ? 'cursor-pointer hover:bg-gray-50' : 'opacity-60 cursor-not-allowed'}`}
-                          onClick={()=>{ const ok = !!(selectedCommRound && rounds.find(r => r.id === selectedCommRound)?.status === 'finished'); if (ok) applyTemplate('final-result','rich'); }}
-                          role="button"
-                          aria-label="Inserir modelo: Resultado Final"
-                          aria-disabled={!((selectedCommRound && rounds.find(r => r.id === selectedCommRound)?.status === 'finished'))}
-                        >
-                          <div className="flex items-center gap-2 mb-2">
-                            <FileText className="text-purple-600" size={18} />
-                            <span className="text-sm font-semibold">Resultado Final</span>
-                          </div>
-                          <p className="text-xs text-gray-600 mb-3">Encerramento formal, reconhecimento e link de PDF.</p>
-                          <div className="flex items-center gap-2">
-                            <button onClick={(e)=>{ e.stopPropagation(); applyTemplate('final-result','rich'); }} disabled={!((selectedCommRound && rounds.find(r => r.id === selectedCommRound)?.status === 'finished'))} className={`px-3 py-2 rounded-lg text-xs inline-flex items-center gap-1 ${((selectedCommRound && rounds.find(r => r.id === selectedCommRound)?.status === 'finished')) ? 'bg-green-600 text-white hover:bg-green-700' : 'bg-gray-200 text-gray-600 cursor-not-allowed'}`}><Send size={14}/> Inserir</button>
-                            <button onClick={(e)=>{ e.stopPropagation(); copyTemplate('final-result','plain'); }} disabled={!((selectedCommRound && rounds.find(r => r.id === selectedCommRound)?.status === 'finished'))} className={`px-3 py-2 rounded-lg text-xs inline-flex items-center gap-1 ${((selectedCommRound && rounds.find(r => r.id === selectedCommRound)?.status === 'finished')) ? 'bg-gray-100 text-gray-800 hover:bg-gray-200' : 'bg-gray-200 text-gray-500 cursor-not-allowed'}`}><Copy size={14}/> Copiar texto puro</button>
-                          </div>
+                        <div className="flex items-center gap-2">
+                          <button
+                            onClick={() => { if (commSelectedTemplateKey) applyTemplate(commSelectedTemplateKey, 'rich'); }}
+                            disabled={!commSelectedTemplateKey}
+                            className={`px-3 py-2 rounded-lg text-xs inline-flex items-center gap-1 ${commSelectedTemplateKey ? 'bg-green-600 text-white hover:bg-green-700' : 'bg-gray-200 text-gray-600 cursor-not-allowed'}`}
+                          >
+                            <Send size={14}/> Inserir
+                          </button>
+                          <button
+                            onClick={() => { if (commSelectedTemplateKey) copyTemplate(commSelectedTemplateKey, 'plain'); }}
+                            disabled={!commSelectedTemplateKey}
+                            className={`px-3 py-2 rounded-lg text-xs inline-flex items-center gap-1 ${commSelectedTemplateKey ? 'bg-gray-100 text-gray-800 hover:bg-gray-200' : 'bg-gray-200 text-gray-500 cursor-not-allowed'}`}
+                          >
+                            <Copy size={14}/> Copiar texto puro
+                          </button>
                         </div>
                       </div>
+                      {commSelectedTemplateKey && (
+                        <div className="mt-3">
+                          <p className="text-xs font-medium text-gray-700 mb-1">Prévia do modelo selecionado</p>
+                          <pre className="whitespace-pre-wrap font-mono text-xs border rounded-lg p-3 bg-gray-50 text-gray-800">{buildTemplateText(commSelectedTemplateKey, 'rich')}</pre>
+                        </div>
+                      )}
                     </div>
                   </div>
                 </div>
