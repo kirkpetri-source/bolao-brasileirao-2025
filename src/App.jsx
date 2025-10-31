@@ -4804,6 +4804,7 @@ const UserPanel = ({ setView }) => {
   const [cartelaDetails, setCartelaDetails] = useState(null);
   const [paymentModalOpen, setPaymentModalOpen] = useState(false);
   const [paymentContext, setPaymentContext] = useState(null);
+  const [paymentLocks, setPaymentLocks] = useState({});
 
   // Deep-link para ranking: ?view=user&tab=ranking&round=<id>
   useEffect(() => {
@@ -5278,10 +5279,11 @@ const UserPanel = ({ setView }) => {
                       </div>
                       <button
                         onClick={() => openPaymentForRound(round, pendingCodes, totalAmount)}
-                        className="px-4 py-2 bg-blue-600 text-white rounded-lg font-semibold hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-400"
+                        disabled={!!paymentLocks[round.id]}
+                        className={`px-4 py-2 rounded-lg font-semibold focus:outline-none focus:ring-2 ${paymentLocks[round.id] ? 'bg-gray-300 text-gray-600 cursor-not-allowed' : 'bg-blue-600 text-white hover:bg-blue-700 focus:ring-blue-400'}`}
                         aria-label={`Gerar pagamento de ${fmtBRL(totalAmount)} para ${pendingCartelas.length} participação(ões)`}
                       >
-                        Gerar Pagamento • {fmtBRL(totalAmount)}
+                        {paymentLocks[round.id] ? 'Processando...' : `Gerar Pagamento • ${fmtBRL(totalAmount)}`}
                       </button>
                     </div>
                   );
@@ -5295,6 +5297,8 @@ const UserPanel = ({ setView }) => {
   };
 
   const openPaymentForRound = (round, cartelaCodes, amount) => {
+    if (paymentLocks[round.id]) return;
+    setPaymentLocks(prev => ({ ...prev, [round.id]: true }));
     setPaymentContext({ roundId: round.id, roundName: round.name, cartelaCodes, amount });
     setPaymentModalOpen(true);
   };
@@ -5610,7 +5614,7 @@ const UserPanel = ({ setView }) => {
     );
   };
 
-  const PaymentModal = ({ open, onClose, context, currentUser }) => {
+  const PaymentModal = ({ open, onClose, context, currentUser, onStart, onApproved, onError }) => {
     const { users, settings } = useApp();
     const [stage, setStage] = useState('collect'); // collect | creating | showing | approved | error
     const [error, setError] = useState('');
@@ -5654,6 +5658,7 @@ const UserPanel = ({ setView }) => {
     const handleCreate = async () => {
       try {
         setError(''); setStage('creating');
+        try { if (typeof onStart === 'function') onStart(); } catch {}
         // Determinar administrador conectado (prioriza admin logado; senão busca em 'admins')
         let adminId = null;
         if (currentUser?.isAdmin) {
@@ -5704,25 +5709,28 @@ const UserPanel = ({ setView }) => {
           }
           setStage('showing');
         }
-        // start polling every 30s
+        // start polling every 10s usando reconciliação
         if (pollRef.current) clearInterval(pollRef.current);
         pollRef.current = setInterval(async () => {
           try {
-            const sres = await axios.get(`${apiBase}/api/payments/status`, { params: { id: created.id } });
+            const sres = await axios.get(`${apiBase}/api/payments/mercadopago/reconcile`, { params: { id: created.id } });
             const status = sres.data?.status;
             if (status === 'approved') {
               setStage('approved');
               clearInterval(pollRef.current);
+              try { if (typeof onApproved === 'function') onApproved({ id: created.id }); } catch {}
             } else if (status === 'rejected') {
               setError('Pagamento rejeitado. Tente novamente.');
               setStage('error');
               clearInterval(pollRef.current);
+              try { if (typeof onError === 'function') onError(new Error('Pagamento rejeitado')); } catch {}
             }
           } catch {}
-        }, 30000);
+        }, 10000);
       } catch (e) {
         setError(e?.response?.data?.error || e.message || 'Falha ao criar pagamento');
         setStage('error');
+        try { if (typeof onError === 'function') onError(e); } catch {}
       }
     };
 
@@ -6468,9 +6476,12 @@ const UserPanel = ({ setView }) => {
       {paymentModalOpen && paymentContext && (
         <PaymentModal
           open={paymentModalOpen}
-          onClose={() => { setPaymentModalOpen(false); setPaymentContext(null); }}
+          onClose={() => { if (paymentContext?.roundId) setPaymentLocks(prev => ({ ...prev, [paymentContext.roundId]: false })); setPaymentModalOpen(false); setPaymentContext(null); }}
           context={paymentContext}
           currentUser={currentUser}
+          onStart={() => { /* lock already set on open */ }}
+          onApproved={() => { if (paymentContext?.roundId) setPaymentLocks(prev => ({ ...prev, [paymentContext.roundId]: false })); }}
+          onError={() => { if (paymentContext?.roundId) setPaymentLocks(prev => ({ ...prev, [paymentContext.roundId]: false })); }}
         />
       )}
     </div>
