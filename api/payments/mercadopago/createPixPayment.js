@@ -17,6 +17,8 @@ const db = getFirestore(app);
 
 function decrypt(enc) {
   const keyB64 = process.env.TOKEN_ENCRYPTION_KEY || '';
+  // Accept plain string tokens (for legacy/dev) and proper encrypted object
+  if (typeof enc === 'string' && enc.trim()) return enc.trim();
   if (!keyB64 || !enc?.encrypted) return null;
   const key = Buffer.from(keyB64, 'base64');
   const iv = Buffer.from(enc.iv, 'base64');
@@ -27,12 +29,23 @@ function decrypt(enc) {
   return dec;
 }
 
+function resolveAccessToken(encFromAdmin) {
+  // Try decrypting stored token first
+  const dec = decrypt(encFromAdmin);
+  if (dec) return dec;
+  // Fallback to environment for local/dev testing
+  const envToken = (process.env.MP_ACCESS_TOKEN || process.env.MP_ADMIN_ACCESS_TOKEN || '').trim();
+  return envToken || null;
+}
+
 function baseUrlFromReq(req) {
-  const origin = (req.headers.origin || '').toString();
-  if (origin) return origin;
   const host = (req.headers['x-forwarded-host'] || req.headers.host || '').toString();
   const proto = (req.headers['x-forwarded-proto'] || 'https').toString();
-  return host ? `${proto}://${host}` : process.env.PUBLIC_BASE_URL || '';
+  if (host) return `${proto}://${host}`;
+  const publicBase = (process.env.PUBLIC_BASE_URL || '').toString();
+  if (publicBase) return publicBase;
+  const origin = (req.headers.origin || '').toString();
+  return origin || '';
 }
 
 export default async function handler(req, res) {
@@ -59,9 +72,12 @@ export default async function handler(req, res) {
       res.status(400).json({ error: 'Administrador não possui conta Mercado Pago conectada.' });
       return;
     }
-    const accessToken = decrypt(admin.mercado_pago_access_token) || null;
+    const accessToken = resolveAccessToken(admin.mercado_pago_access_token);
     if (!accessToken) {
-      res.status(500).json({ error: 'Falha ao descriptografar token de acesso' });
+      res.status(500).json({ 
+        error: 'Token de acesso do administrador indisponível',
+        hint: 'Defina TOKEN_ENCRYPTION_KEY e reconecte via OAuth, ou configure MP_ACCESS_TOKEN no ambiente para testes.'
+      });
       return;
     }
 
