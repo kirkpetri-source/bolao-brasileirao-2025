@@ -99,7 +99,9 @@ export default async function handler(req, res) {
     const baseUrl = baseUrlFromReq(req);
     const notificationUrl = baseUrl ? `${baseUrl}/api/payments/mercadopago/webhook?adminId=${encodeURIComponent(adminId)}` : undefined;
 
-    // Create PIX payment
+    // Create PIX payment — alguns ambientes exigem payer não nulo
+    const payerEmail = (payer?.email || process.env.MP_PAYER_EMAIL_FALLBACK || process.env.DEFAULT_PAYER_EMAIL || 'pix@bolao-brasileirao-2025.app');
+    const payerName = (payer?.name || 'Participante');
     const payload = {
       transaction_amount: Number(amount),
       description,
@@ -107,9 +109,8 @@ export default async function handler(req, res) {
       external_reference: txDoc.id,
       notification_url: notificationUrl,
       payer: {
-        // email é opcional no PIX — manter vazio para UX simples
-        email: payer?.email || undefined,
-        first_name: payer?.name || undefined,
+        email: payerEmail,
+        first_name: payerName,
       }
     };
     const headers = { Authorization: `Bearer ${accessToken}` };
