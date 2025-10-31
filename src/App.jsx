@@ -6123,13 +6123,33 @@ const UserPanel = ({ setView }) => {
                           <h3 className="text-xl font-bold">{round.name}</h3>
                           <p className="text-gray-600 mt-1">{round.matches?.length || 0} jogos • R$ {settings?.betValue?.toFixed(2) || '15,00'} por participação</p>
                         </div>
-                        <button 
-                          onClick={() => handleStartPrediction(round)} 
-                          className="flex items-center gap-2 bg-green-600 text-white px-6 py-3 rounded-lg font-medium hover:bg-green-700"
-                        >
-                          <Plus size={20} />
-                          Nova Participação
-                        </button>
+                        <div className="flex gap-2 items-center">
+                          <button 
+                            onClick={() => handleStartPrediction(round)} 
+                            className="flex items-center gap-2 bg-green-600 text-white px-4 sm:px-6 py-3 rounded-lg font-medium hover:bg-green-700"
+                          >
+                            <Plus size={20} />
+                            Nova Participação
+                          </button>
+                          {(() => {
+                            const pendingCartelas = (getUserCartelasForRound(round.id) || []).filter(c => !c.paid);
+                            const pendingCodes = pendingCartelas.map(c => c.code);
+                            const totalAmount = (settings?.betValue || 15) * pendingCartelas.length;
+                            const disabled = pendingCartelas.length === 0 || !!paymentLocks[round.id] || !!paymentModalOpen;
+                            return (
+                              <button
+                                onClick={() => openPaymentForRound(round, pendingCodes, totalAmount)}
+                                disabled={disabled}
+                                className={`flex items-center gap-2 px-4 sm:px-6 py-3 rounded-lg font-semibold focus:outline-none focus:ring-2 ${disabled ? 'bg-gray-300 text-gray-600 cursor-not-allowed' : 'bg-blue-600 text-white hover:bg-blue-700 focus:ring-blue-400'}`}
+                                aria-label={`Efetuar pagamento da rodada ${round.name} no valor de ${fmtBRL(totalAmount)}`}
+                              >
+                                <DollarSign size={20} />
+                                {paymentLocks[round.id] ? 'Processando...' : 'Efetuar Pagamento da Rodada'}
+                                {!disabled && <span> • {fmtBRL(totalAmount)}</span>}
+                              </button>
+                            );
+                          })()}
+                        </div>
                       </div>
 
                       {userCartelas.length > 0 && (
