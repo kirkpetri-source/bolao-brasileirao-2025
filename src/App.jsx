@@ -5615,7 +5615,7 @@ const UserPanel = ({ setView }) => {
   };
 
   const PaymentModal = ({ open, onClose, context, currentUser, onStart, onApproved, onError }) => {
-    const { users, settings } = useApp();
+    const { users, settings, predictions } = useApp();
     const [stage, setStage] = useState('collect'); // collect | creating | showing | approved | error
     const [error, setError] = useState('');
     const [tx, setTx] = useState(null);
@@ -5632,8 +5632,37 @@ const UserPanel = ({ setView }) => {
 
     useEffect(() => {
       if (!open) return;
-      setStage('collect'); setError(''); setTx(null); setCopied('');
+      setError(''); setTx(null); setCopied('');
+      // Se já estiver pago no banco, mostrar diretamente a confirmação
+      try {
+        const roundId = context?.roundId;
+        const codes = Array.isArray(context?.cartelaCodes) ? context.cartelaCodes : [];
+        const myPreds = predictions.filter(p => p.userId === currentUser?.id && p.roundId === roundId && (codes.length ? codes.includes(p.cartelaCode) : true));
+        const anyPending = myPreds.length > 0 ? myPreds.some(p => !p.paid) : true;
+        if (!anyPending) {
+          setApprovedAt(new Date());
+          setStage('approved');
+        } else {
+          setStage('collect');
+        }
+      } catch {
+        setStage('collect');
+      }
     }, [open]);
+
+    // Monitora atualizações de pagamento no banco e muda para 'approved'
+    useEffect(() => {
+      if (!open) return;
+      const roundId = context?.roundId;
+      const codes = Array.isArray(context?.cartelaCodes) ? context.cartelaCodes : [];
+      if (!roundId || !currentUser?.id) return;
+      const myPreds = predictions.filter(p => p.userId === currentUser.id && p.roundId === roundId && (codes.length ? codes.includes(p.cartelaCode) : true));
+      if (myPreds.length > 0 && myPreds.every(p => !!p.paid)) {
+        setApprovedAt(new Date());
+        setStage('approved');
+        if (pollRef.current) clearInterval(pollRef.current);
+      }
+    }, [predictions, open, context?.roundId, context?.cartelaCodes, currentUser?.id]);
 
     useEffect(() => {
       if (!tx?.expiration) return;
