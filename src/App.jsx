@@ -95,6 +95,9 @@ const initializeDatabase = async () => {
           link: '',
           token: ''
         },
+        maintenanceMode: false,
+        maintenanceMessage: 'Estamos realizando uma manutenção programada para melhorar sua experiência. Por favor, tente novamente em breve.',
+        maintenanceUntil: null,
         betValue: 15,
         createdAt: serverTimestamp()
       });
@@ -547,7 +550,7 @@ const RulesCard = () => {
 };
 
 const LoginScreen = ({ setView }) => {
-  const { users, login, addUser, updateUser } = useApp();
+  const { users, login, addUser, updateUser, settings } = useApp();
   const [whatsapp, setWhatsapp] = useState('');
   const [password, setPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
@@ -598,6 +601,12 @@ const LoginScreen = ({ setView }) => {
         }
       }
       if (ok) {
+        // Se manutenção ativa e o usuário não é admin, redireciona para tela de manutenção
+        if (settings?.maintenanceMode && !user.isAdmin) {
+          setView('maintenance');
+          setError('');
+          return;
+        }
         // garante sessão e view correta
         await login(user);
         setView(user.isAdmin ? 'admin' : 'user');
@@ -609,6 +618,10 @@ const LoginScreen = ({ setView }) => {
   };
 
   const handleRegister = async () => {
+    if (settings?.maintenanceMode) {
+      setError('Cadastro temporariamente indisponível durante a manutenção.');
+      return;
+    }
     if (!reg.name || !reg.whatsapp || !reg.password) return setError('Preencha todos!');
     if (reg.password !== reg.confirmPassword) return setError('Senhas diferentes!');
     if (reg.password.length < 6) return setError('Senha mínimo 6!');
@@ -1140,6 +1153,10 @@ const AdminPanel = ({ setView }) => {
   const [devolutionToken, setDevolutionToken] = useState(settings?.devolution?.token || '');
   const [pdfLoadingRoundId, setPdfLoadingRoundId] = useState(null);
   const [adminPlayerModal, setAdminPlayerModal] = useState(null);
+  // Manutenção do sistema
+  const [maintenanceMode, setMaintenanceMode] = useState(!!settings?.maintenanceMode);
+  const [maintenanceMessage, setMaintenanceMessage] = useState(settings?.maintenanceMessage || 'Estamos realizando uma manutenção programada para melhorar sua experiência. Por favor, tente novamente em breve.');
+  const [maintenanceUntilInput, setMaintenanceUntilInput] = useState(settings?.maintenanceUntil ? new Date(settings.maintenanceUntil).toISOString().slice(0, 16) : '');
   // Valores padrão para regras, pontuação e desempate (usados se não houver conteúdo salvo)
   const initialBet = settings?.betValue != null ? settings.betValue : 15;
   const initialBetDisplay = Number(initialBet).toFixed(2).replace('.', ',');
@@ -1244,6 +1261,10 @@ const AdminPanel = ({ setView }) => {
     setDevolutionLink(settings?.devolution?.link || '');
     setDevolutionInstance(settings?.devolution?.instanceName || '');
     setDevolutionToken(settings?.devolution?.token || '');
+    // Atualiza estados de manutenção quando settings muda
+    setMaintenanceMode(!!settings?.maintenanceMode);
+    setMaintenanceMessage(settings?.maintenanceMessage || 'Estamos realizando uma manutenção programada para melhorar sua experiência. Por favor, tente novamente em breve.');
+    setMaintenanceUntilInput(settings?.maintenanceUntil ? new Date(settings.maintenanceUntil).toISOString().slice(0, 16) : '');
 
     // Prefill regras/scoring/desempate mesmo sem settings (usando valor efetivo)
     const effectiveBet = settings?.betValue != null ? settings.betValue : (betValue != null ? Number(betValue) : 15);
@@ -1575,8 +1596,9 @@ const AdminPanel = ({ setView }) => {
   };
 
   const [isSendingCharges, setIsSendingCharges] = useState(false);
-const [commsMessage, setCommsMessage] = useState('');
-const [commSelectedTemplateKey, setCommSelectedTemplateKey] = useState('');
+  const [commsMessage, setCommsMessage] = useState('');
+  const [commSelectedTemplateKey, setCommSelectedTemplateKey] = useState('');
+ 
   const [selectedCommUserId, setSelectedCommUserId] = useState('');
   const [selectedCommRound, setSelectedCommRound] = useState(null);
   const [commPaymentFilter, setCommPaymentFilter] = useState('all');
@@ -1634,6 +1656,10 @@ const [commSelectedTemplateKey, setCommSelectedTemplateKey] = useState('');
     // Sanitização: remover espaços, barras/ pontos finais, e forçar HTTPS (para chamada direta)
     let cleanBase = (base || '').trim().replace(/\/$/, '').replace(/\.$/, '');
     let cleanInstance = (instance || '').trim().replace(/\.$/, '');
+ 
+ 
+    if (cleanBase.startsWith('http://')) cleanBase = 'https://' + cleanBase.slice(7);
+ 
 
     const directUrl = `${cleanBase}/message/sendText/${encodeURIComponent(cleanInstance)}`;
 
@@ -1883,7 +1909,10 @@ const [commSelectedTemplateKey, setCommSelectedTemplateKey] = useState('');
           link: devolutionLink,
           instanceName: devolutionInstance,
           token: devolutionToken
-        }
+        },
+        maintenanceMode: !!maintenanceMode,
+        maintenanceMessage: maintenanceMessage,
+        maintenanceUntil: maintenanceUntilInput ? Date.parse(maintenanceUntilInput) : null
       };
       
       console.log('Salvando configurações:', dataToSave);
@@ -1903,6 +1932,24 @@ const [commSelectedTemplateKey, setCommSelectedTemplateKey] = useState('');
         const settingsId = settingsSnapshot.docs[0].id;
         console.log('Atualizando settings com ID:', settingsId);
         await updateDoc(doc(db, 'settings', settingsId), dataToSave);
+      }
+      // Log de ativação/desativação do modo de manutenção
+      try {
+        const prev = !!settings?.maintenanceMode;
+        const next = !!dataToSave.maintenanceMode;
+        if (prev !== next) {
+          await addDoc(collection(db, 'logs'), {
+            type: 'maintenance_toggle',
+            maintenance: next,
+            actorId: currentUser?.id || null,
+            actorName: currentUser?.name || 'Admin',
+            message: maintenanceMessage,
+            until: maintenanceUntilInput ? Date.parse(maintenanceUntilInput) : null,
+            createdAt: serverTimestamp()
+          });
+        }
+      } catch (logErr) {
+        console.warn('Falha ao registrar log de manutenção:', logErr);
       }
       
       console.log('✅ Configurações salvas com sucesso!');
@@ -3366,6 +3413,39 @@ const [commSelectedTemplateKey, setCommSelectedTemplateKey] = useState('');
                 </div>
               </div>
 
+              {/* Modo de Manutenção */}
+              <div className="bg-white rounded-xl shadow-sm border p-6">
+                <h3 className="text-lg font-bold mb-4 flex items-center gap-2">
+                  <AlertCircle size={24} className="text-green-600" />
+                  Modo de Manutenção
+                </h3>
+                <p className="text-gray-600 text-sm mb-4">
+                  Quando ativado, usuários não administradores verão uma tela de manutenção ao tentar acessar o sistema.
+                </p>
+                <div className="flex items-center gap-3 mb-4">
+                  <label className="flex items-center gap-2">
+                    <input type="checkbox" checked={maintenanceMode} onChange={(e) => setMaintenanceMode(e.target.checked)} />
+                    <span className="font-medium">Ativar modo de manutenção</span>
+                  </label>
+                </div>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                  <div className="sm:col-span-2">
+                    <label className="block text-sm font-medium mb-2">Mensagem</label>
+                    <textarea value={maintenanceMessage} onChange={(e) => setMaintenanceMessage(e.target.value)} className="w-full px-4 py-3 border rounded-lg" rows="4" placeholder="Mensagem de manutenção" />
+                  </div>
+                  <div>
+                    <label className="block text-sm font-medium mb-2">Retorno Estimado</label>
+                    <input type="datetime-local" value={maintenanceUntilInput} onChange={(e) => setMaintenanceUntilInput(e.target.value)} className="w-full px-4 py-3 border rounded-lg" />
+                  </div>
+                </div>
+                <div className="flex sm:justify-end gap-3 mt-4">
+                  <button onClick={handleSaveWhatsAppMessage} className="w-full sm:w-auto px-6 py-2 bg-green-600 text-white rounded-lg">Salvar Manutenção</button>
+                </div>
+                <div className="mt-4 p-4 bg-yellow-50 rounded-lg text-sm text-yellow-800">
+                  <p>Um registro de log será criado quando a manutenção for ativada ou desativada.</p>
+                </div>
+              </div>
+
               {/* Regras do Bolão (Editor com formatação e prévia) */}
               <div className="bg-white rounded-xl shadow-sm border p-6">
                 <h3 className="text-lg font-bold mb-4 flex items-center gap-2">
@@ -3992,6 +4072,7 @@ const [commSelectedTemplateKey, setCommSelectedTemplateKey] = useState('');
                       <p id="err-comm-msg" className="text-xs text-red-600 mt-1">Informe uma mensagem.</p>
                     )}
                     <p className="text-xs text-gray-500 mt-2">Variáveis: {'{NOME}'} • Dica: personalize com contexto curto.</p>
+ 
                     {(() => {
                       const context = getTemplateContext();
                       const { unknownTags, missingTags } = validateMessageTags(commsMessage || '', context);
@@ -4014,6 +4095,7 @@ const [commSelectedTemplateKey, setCommSelectedTemplateKey] = useState('');
                         </div>
                       );
                     })()}
+ 
                   </div>
 
                   {/* Personalização rápida para modelos */}
@@ -5703,8 +5785,66 @@ const UserPanel = ({ setView }) => {
   );
 };
 
+// Tela de Manutenção
+const MaintenanceScreen = () => {
+  const { settings } = useApp();
+  const brand = settings?.brandName || 'Bolão Brasileiro 2025';
+  const message = settings?.maintenanceMessage || 'Estamos realizando uma manutenção programada para melhorar sua experiência. Por favor, tente novamente em breve.';
+  const untilMs = settings?.maintenanceUntil || null;
+  const [remaining, setRemaining] = useState('');
+  useEffect(() => {
+    if (!untilMs) return;
+    const tick = () => {
+      const now = Date.now();
+      const diff = untilMs - now;
+      if (diff <= 0) { setRemaining('Pouco tempo'); return; }
+      const h = Math.floor(diff / 3600000);
+      const m = Math.floor((diff % 3600000) / 60000);
+      const s = Math.floor((diff % 60000) / 1000);
+      setRemaining(`${h}h ${m}m ${s}s`);
+    };
+    tick();
+    const id = setInterval(tick, 1000);
+    return () => clearInterval(id);
+  }, [untilMs]);
+
+  return (
+    <div className="min-h-screen bg-gradient-to-br from-gray-900 via-green-900 to-green-700 flex items-center justify-center p-6">
+      <div className="bg-white rounded-2xl shadow-2xl w-full max-w-2xl overflow-hidden">
+        <div className="bg-green-700 text-white p-6 flex items-center gap-3">
+          <AlertCircle size={28} className="text-white" />
+          <div>
+            <h1 className="text-2xl font-bold">Sistema em manutenção</h1>
+            <p className="text-sm opacity-90">{brand}</p>
+          </div>
+        </div>
+        <div className="p-6 space-y-4">
+          <div className="flex items-center gap-3">
+            <div className="h-12 w-12 rounded-full bg-green-100 flex items-center justify-center">
+              <AlertCircle size={26} className="text-green-700" />
+            </div>
+            <p className="text-gray-800 text-lg font-medium">{message}</p>
+          </div>
+          {untilMs && (
+            <div className="flex items-center gap-3 p-4 bg-green-50 border border-green-200 rounded-lg">
+              <Loader2 size={20} className="text-green-700 animate-spin" />
+              <div className="text-sm text-green-800">
+                <p className="font-semibold">Previsão de retorno</p>
+                <p>Volta estimada em: <span className="font-mono">{remaining}</span></p>
+              </div>
+            </div>
+          )}
+          <div className="pt-2 text-sm text-gray-500">
+            <p>Administradores podem acessar normalmente.</p>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+};
+
 function App() {
-  const { currentUser, loading } = useApp();
+  const { currentUser, loading, settings } = useApp();
   const [view, setView] = useState('login');
 
   useEffect(() => {
@@ -5729,6 +5869,10 @@ function App() {
   }
 
   if (!currentUser || view === 'login') return <LoginScreen setView={setView} />;
+  // Gating global: se manutenção estiver ativa, usuários logados não-admin são direcionados à tela de manutenção
+  if (settings?.maintenanceMode && (currentUser && !currentUser.isAdmin)) {
+    return <MaintenanceScreen />;
+  }
   if (currentUser.isAdmin && view === 'admin') return <AdminPanel setView={setView} />;
   if (view === 'user') return <UserPanel setView={setView} />;
   return null;
