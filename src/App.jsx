@@ -1,9 +1,10 @@
 import React, { useState, useEffect, useRef, createContext, useContext, useMemo } from 'react';
- import { Trophy, Users, Calendar, TrendingUp, LogOut, Eye, EyeOff, Plus, Edit2, Trash2, Upload, ExternalLink, X, UserPlus, Target, Award, ChevronDown, ChevronUp, Check, Key, DollarSign, CheckCircle, XCircle, AlertCircle, FileText, Download, Store, Filter, Loader2, Megaphone, Send, Search, Bell, Copy } from 'lucide-react';
+import { Trophy, Users, Calendar, TrendingUp, LogOut, Eye, EyeOff, Plus, Edit2, Trash2, Upload, ExternalLink, X, UserPlus, Target, Award, ChevronDown, ChevronUp, Check, Key, DollarSign, CheckCircle, XCircle, AlertCircle, FileText, Download, Store, Filter, Loader2, Megaphone, Send, Search, Bell, Copy, RefreshCcw, History } from 'lucide-react';
 import { initializeApp } from 'firebase/app';
-import { getFirestore, collection, addDoc, updateDoc, deleteDoc, doc, getDocs, getDoc, onSnapshot, serverTimestamp, query, where } from 'firebase/firestore';
+import { getFirestore, collection, addDoc, updateDoc, deleteDoc, doc, getDocs, getDoc, onSnapshot, serverTimestamp, query, where, orderBy, limit } from 'firebase/firestore';
 import bcrypt from 'bcryptjs';
 import { jsPDF } from 'jspdf';
+import axios from 'axios';
 import { MESSAGE_TEMPLATES, TEMPLATE_CATEGORIES, buildTemplateText as buildTemplateTextUtil, validateMessageTags, normalizeTags } from './utils/messageTemplates.js';
 
 const firebaseConfig = {
@@ -26,6 +27,11 @@ const generateCartelaCode = () => {
 
 const AppContext = createContext();
 const useApp = () => useContext(AppContext);
+
+// Util: moeda BRL
+const fmtBRL = (n) => {
+  try { return new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(Number(n)); } catch { return `R$ ${Number(n).toFixed(2)}`; }
+};
 
 // TIMES OFICIAIS DA SÉRIE A 2025 - CBF
 const SERIE_A_2025_TEAMS = [
@@ -98,7 +104,41 @@ const initializeDatabase = async () => {
         maintenanceMode: false,
         maintenanceMessage: 'Estamos realizando uma manutenção programada para melhorar sua experiência. Por favor, tente novamente em breve.',
         maintenanceUntil: null,
+        maintenanceAllowedIps: [],
+        maintenanceSchedule: { start: null, end: null },
         betValue: 15,
+        whatsapp: {
+          apiToken: '',
+          number: '',
+          notifyEnabled: true,
+          notifyEvents: { charges: true, approvals: true, results: true },
+          defaultTemplates: {
+            confirm: '🏆 *BOLÃO BRASILEIRÃO 2025*\n\n📋 *{RODADA}*\n🎫 *Cartela: {CARTELA}*\n✅ Confirmado!\n\n{PALPITES}\n\n💰 R$ 15,00\n⚠️ *Não pode alterar após pagamento*\n\nBoa sorte! 🍀',
+            charge: 'Olá {NOME},\n\nIdentificamos que o pagamento da sua cartela da {RODADA} ainda está pendente.\n\nValor: R$ {VALOR}\nCartela: {CARTELA}\n\nPor favor, conclua o pagamento para validar sua participação no ranking e na premiação. Obrigado! 🙏'
+          }
+        },
+        betConfig: {
+          minBet: 10,
+          maxBet: 100,
+          bonus: { enabled: false, percent: 0 },
+          fees: { adminPercent: 10, establishmentPercent: 5 },
+          typesLimitsText: ''
+        },
+        payment: {
+          provider: 'mercadopago',
+          useEnvCredentials: true,
+          mercadopago: { accessToken: '', webhookSecret: '', webhookUrl: '' },
+          methods: { pix: true, card: false },
+          transactionFeePercent: 0,
+          allowedIps: [],
+          signatureHeaderName: 'x-signature',
+          retries: 3,
+          timeoutMs: 10000
+        },
+        termsOfUse: '',
+        systemPolicies: '',
+        limitsRestrictions: '',
+        complianceConfig: '',
         createdAt: serverTimestamp()
       });
     }
@@ -1153,10 +1193,134 @@ const AdminPanel = ({ setView }) => {
   const [devolutionToken, setDevolutionToken] = useState(settings?.devolution?.token || '');
   const [pdfLoadingRoundId, setPdfLoadingRoundId] = useState(null);
   const [adminPlayerModal, setAdminPlayerModal] = useState(null);
+  const [settingsTab, setSettingsTab] = useState('whatsapp');
   // Manutenção do sistema
   const [maintenanceMode, setMaintenanceMode] = useState(!!settings?.maintenanceMode);
   const [maintenanceMessage, setMaintenanceMessage] = useState(settings?.maintenanceMessage || 'Estamos realizando uma manutenção programada para melhorar sua experiência. Por favor, tente novamente em breve.');
   const [maintenanceUntilInput, setMaintenanceUntilInput] = useState(settings?.maintenanceUntil ? new Date(settings.maintenanceUntil).toISOString().slice(0, 16) : '');
+  const [maintenanceAllowedIps, setMaintenanceAllowedIps] = useState((settings?.maintenanceAllowedIps || []).join(', '));
+  const [maintenanceScheduleStart, setMaintenanceScheduleStart] = useState('');
+  const [maintenanceScheduleEnd, setMaintenanceScheduleEnd] = useState('');
+  // WhatsApp
+  const [whatsappProvider, setWhatsappProvider] = useState(settings?.whatsapp?.provider || (settings?.devolution?.link ? 'evolution' : 'cloud'));
+  const [whatsappApiToken, setWhatsappApiToken] = useState(settings?.whatsapp?.apiToken || '');
+  const [whatsappNumber, setWhatsappNumber] = useState(settings?.whatsapp?.number || '');
+  const [whatsappNotifyEnabled, setWhatsappNotifyEnabled] = useState(settings?.whatsapp?.notifyEnabled ?? true);
+  const [whatsappNotifyEvents, setWhatsappNotifyEvents] = useState(settings?.whatsapp?.notifyEvents || { charges: true, approvals: true, results: true });
+  // Regras extras
+  const [termsOfUse, setTermsOfUse] = useState(settings?.termsOfUse || '');
+  const [systemPolicies, setSystemPolicies] = useState(settings?.systemPolicies || '');
+  const [limitsRestrictions, setLimitsRestrictions] = useState(settings?.limitsRestrictions || '');
+  const [complianceConfig, setComplianceConfig] = useState(settings?.complianceConfig || '');
+  // Valor da aposta avançado
+  const [minBet, setMinBet] = useState(settings?.betConfig?.minBet || 10);
+  const [maxBet, setMaxBet] = useState(settings?.betConfig?.maxBet || 100);
+  const [bonusEnabled, setBonusEnabled] = useState(settings?.betConfig?.bonus?.enabled ?? false);
+  const [bonusPercent, setBonusPercent] = useState(settings?.betConfig?.bonus?.percent || 0);
+  const [adminFeePercent, setAdminFeePercent] = useState(settings?.betConfig?.fees?.adminPercent ?? 10);
+  const [establishmentPercent, setEstablishmentPercent] = useState(settings?.betConfig?.fees?.establishmentPercent ?? 5);
+  const [limitsByTypeText, setLimitsByTypeText] = useState(settings?.betConfig?.typesLimitsText || '');
+  // API de Pagamento
+  const [paymentProvider, setPaymentProvider] = useState(settings?.payment?.provider || 'mercadopago');
+  const [paymentPixEnabled, setPaymentPixEnabled] = useState(settings?.payment?.methods?.pix ?? true);
+  const [paymentCardEnabled, setPaymentCardEnabled] = useState(settings?.payment?.methods?.card ?? false);
+  const [transactionFeePercent, setTransactionFeePercent] = useState(settings?.payment?.transactionFeePercent || 0);
+  const [paymentAllowedIps, setPaymentAllowedIps] = useState((settings?.payment?.allowedIps || []).join(', '));
+  const [signatureHeaderName, setSignatureHeaderName] = useState(settings?.payment?.signatureHeaderName || 'x-signature');
+  const [paymentRetries, setPaymentRetries] = useState(settings?.payment?.retries || 3);
+  const [paymentTimeoutMs, setPaymentTimeoutMs] = useState(settings?.payment?.timeoutMs || 10000);
+  const [showAdvancedPayment, setShowAdvancedPayment] = useState(false);
+  const origin = typeof window !== 'undefined' ? window.location.origin : '';
+  const mpWebhookUrl = origin ? `${origin}/api/payments/mercadopago/webhook` : '/api/payments/mercadopago/webhook';
+  // Conexão Mercado Pago (OAuth)
+  const [mpConn, setMpConn] = useState({ connected: false, email: null, nickname: null, loading: true });
+  const [adminPayments, setAdminPayments] = useState([]);
+  const [monthlyTotal, setMonthlyTotal] = useState(0);
+
+  useEffect(() => {
+    if (!currentUser?.isAdmin) return;
+    const unsub = onSnapshot(doc(db, 'admins', currentUser.id), (snap) => {
+      const d = snap.data() || {};
+      setMpConn({
+        connected: !!d?.mercado_pago_connected,
+        email: d?.mercado_pago_account?.email || null,
+        nickname: d?.mercado_pago_account?.nickname || null,
+        loading: false
+      });
+    });
+    return () => { try { unsub(); } catch {} };
+  }, [currentUser?.id]);
+
+  useEffect(() => {
+    if (!currentUser?.isAdmin) return;
+    const q = query(collection(db, 'user_payments'), where('adminId', '==', currentUser.id));
+    const unsub = onSnapshot(q, (snap) => {
+      const list = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+      setAdminPayments(list);
+      const now = new Date();
+      const monthStart = new Date(now.getFullYear(), now.getMonth(), 1);
+      const total = list
+        .filter(p => p.status === 'approved')
+        .filter(p => {
+          const dt = p.createdAt?.toDate ? p.createdAt.toDate() : null;
+          return dt ? dt >= monthStart : true;
+        })
+        .reduce((sum, p) => sum + (Number(p.amount) || 0), 0);
+      setMonthlyTotal(total);
+    });
+    return () => { try { unsub(); } catch {} };
+  }, [currentUser?.id]);
+
+  const connectMercadoPago = async () => {
+    try {
+      if (!currentUser?.id) { alert('Administrador não identificado.'); return; }
+      const apiBase = import.meta.env.VITE_API_BASE_URL || '';
+      const r = await fetch(`${apiBase}/api/oauth/mp/start`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ adminId: currentUser.id })
+      });
+      if (!r.ok) {
+        // Ambiente local (vite) não serve /api -> orientar uso do vercel dev
+        throw new Error('Endpoint /api indisponível no dev local. Use "npx vercel dev" ou teste no deploy.');
+      }
+      const j = await r.json();
+      if (j?.url) {
+        window.open(j.url, 'mp-oauth', 'width=800,height=700');
+      } else {
+        alert('Não foi possível iniciar a conexão com o Mercado Pago.');
+      }
+    } catch (e) {
+      alert('Erro ao conectar: ' + (e?.message || 'falha desconhecida'));
+    }
+  };
+
+  const disconnectMercadoPago = async () => {
+    try {
+      if (!currentUser?.id) { alert('Administrador não identificado.'); return; }
+      const apiBase = import.meta.env.VITE_API_BASE_URL || '';
+      const r = await fetch(`${apiBase}/api/oauth/mp/disconnect`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ adminId: currentUser.id })
+      });
+      if (!r.ok) {
+        throw new Error('Endpoint /api indisponível no dev local. Use "npx vercel dev" ou teste no deploy.');
+      }
+      const j = await r.json();
+      if (j?.ok) {
+        alert('Conta Mercado Pago desconectada.');
+      } else {
+        alert('Não foi possível desconectar.');
+      }
+    } catch (e) {
+      alert('Erro ao desconectar: ' + (e?.message || 'falha desconhecida'));
+    }
+  };
+  // Testes A/B
+  const [abTestsEnabled, setAbTestsEnabled] = useState(settings?.abTests?.enabled ?? false);
+  const [experimentDashboardPercent, setExperimentDashboardPercent] = useState(settings?.abTests?.experiments?.newDashboard || 0);
+  const [experimentPaymentFlowPercent, setExperimentPaymentFlowPercent] = useState(settings?.abTests?.experiments?.paymentFlowV2 || 0);
+  // Histórico
+  const [settingsHistory, setSettingsHistory] = useState([]);
   // Valores padrão para regras, pontuação e desempate (usados se não houver conteúdo salvo)
   const initialBet = settings?.betValue != null ? settings.betValue : 15;
   const initialBetDisplay = Number(initialBet).toFixed(2).replace('.', ',');
@@ -1199,6 +1363,20 @@ const AdminPanel = ({ setView }) => {
       }
     }
   }, [rounds]);
+
+  useEffect(() => {
+    const loadHistory = async () => {
+      try {
+        const q = query(collection(db, 'settings_history'), orderBy('createdAt', 'desc'), limit(10));
+        const snap = await getDocs(q);
+        const items = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+        setSettingsHistory(items);
+      } catch (err) {
+        console.warn('Falha ao carregar histórico:', err);
+      }
+    };
+    loadHistory();
+  }, [settings]);
 
   // Helpers de formatação (Markdown simples)
   const wrapSelection = (start, end) => {
@@ -1898,6 +2076,8 @@ const AdminPanel = ({ setView }) => {
 
   const handleSaveWhatsAppMessage = async () => {
     try {
+      // validações básicas
+      
       const dataToSave = {
         whatsappMessage: whatsappMessage,
         betValue: parseFloat(betValue),
@@ -1909,35 +2089,69 @@ const AdminPanel = ({ setView }) => {
         },
         maintenanceMode: !!maintenanceMode,
         maintenanceMessage: maintenanceMessage,
-        maintenanceUntil: maintenanceUntilInput ? Date.parse(maintenanceUntilInput) : null
+        maintenanceUntil: maintenanceUntilInput ? Date.parse(maintenanceUntilInput) : null,
+        maintenanceAllowedIps: (maintenanceAllowedIps || '').split(',').map(s => s.trim()).filter(Boolean),
+        maintenanceSchedule: {
+          start: maintenanceScheduleStart ? Date.parse(maintenanceScheduleStart) : null,
+          end: maintenanceScheduleEnd ? Date.parse(maintenanceScheduleEnd) : null
+        },
+        whatsapp: {
+          provider: whatsappProvider,
+          apiToken: whatsappApiToken,
+          number: whatsappNumber,
+          notifyEnabled: !!whatsappNotifyEnabled,
+          notifyEvents: whatsappNotifyEvents,
+          defaultTemplates: { confirm: whatsappMessage, charge: chargeMessageTemplate }
+        },
+        betConfig: {
+          minBet: parseFloat(minBet) || null,
+          maxBet: parseFloat(maxBet) || null,
+          bonus: { enabled: !!bonusEnabled, percent: parseFloat(bonusPercent) || 0 },
+          fees: { adminPercent: parseFloat(adminFeePercent) || 10, establishmentPercent: parseFloat(establishmentPercent) || 5 },
+          typesLimitsText: limitsByTypeText || ''
+        },
+        payment: {
+          provider: paymentProvider,
+          mercadopago: { webhookUrl: mpWebhookUrl },
+          methods: { pix: !!paymentPixEnabled, card: !!paymentCardEnabled },
+          transactionFeePercent: parseFloat(transactionFeePercent) || 0,
+          allowedIps: (paymentAllowedIps || '').split(',').map(s => s.trim()).filter(Boolean),
+          signatureHeaderName,
+          retries: parseInt(paymentRetries) || 3,
+          timeoutMs: parseInt(paymentTimeoutMs) || 10000
+        },
+        abTests: {
+          enabled: !!abTestsEnabled,
+          experiments: { newDashboard: Number(experimentDashboardPercent) || 0, paymentFlowV2: Number(experimentPaymentFlowPercent) || 0 }
+        },
+        rulesText,
+        scoringCriteria,
+        tiebreakRules,
+        termsOfUse,
+        systemPolicies,
+        limitsRestrictions,
+        complianceConfig
       };
-      
-      console.log('Salvando configurações:', dataToSave);
-      
+
       // Buscar o documento de settings
       const settingsSnapshot = await getDocs(collection(db, 'settings'));
-      
+      let settingsId = null;
       if (settingsSnapshot.empty) {
-        // Se não existe, criar novo
-        console.log('Criando novo documento de settings');
-        await addDoc(collection(db, 'settings'), {
-          ...dataToSave,
-          createdAt: serverTimestamp()
-        });
+        const docRef = await addDoc(collection(db, 'settings'), { ...dataToSave, createdAt: serverTimestamp() });
+        settingsId = docRef.id;
       } else {
-        // Se existe, atualizar
-        const settingsId = settingsSnapshot.docs[0].id;
-        console.log('Atualizando settings com ID:', settingsId);
+        settingsId = settingsSnapshot.docs[0].id;
         await updateDoc(doc(db, 'settings', settingsId), dataToSave);
       }
-      // Log de ativação/desativação do modo de manutenção
+
+      // Log de manutenção (toggle)
       try {
-        const prev = !!settings?.maintenanceMode;
-        const next = !!dataToSave.maintenanceMode;
-        if (prev !== next) {
+        const prevMaintenance = !!settings?.maintenanceMode;
+        const nextMaintenance = !!dataToSave.maintenanceMode;
+        if (prevMaintenance !== nextMaintenance) {
           await addDoc(collection(db, 'logs'), {
             type: 'maintenance_toggle',
-            maintenance: next,
+            maintenance: nextMaintenance,
             actorId: currentUser?.id || null,
             actorName: currentUser?.name || 'Admin',
             message: maintenanceMessage,
@@ -1948,12 +2162,32 @@ const AdminPanel = ({ setView }) => {
       } catch (logErr) {
         console.warn('Falha ao registrar log de manutenção:', logErr);
       }
-      
-      console.log('✅ Configurações salvas com sucesso!');
+
+      // Histórico de alterações
+      try {
+        const prev = settings || {};
+        const keysToCheck = ['whatsappMessage','chargeMessageTemplate','betValue','devolution','maintenanceMode','maintenanceMessage','maintenanceUntil','maintenanceAllowedIps','maintenanceSchedule','whatsapp','betConfig','payment','abTests','rulesText','scoringCriteria','tiebreakRules','termsOfUse','systemPolicies','limitsRestrictions','complianceConfig'];
+        const changedFields = [];
+        keysToCheck.forEach(k => {
+          const prevVal = prev ? prev[k] : undefined;
+          if (JSON.stringify(prevVal) !== JSON.stringify(dataToSave[k])) changedFields.push(k);
+        });
+        if (changedFields.length > 0) {
+          await addDoc(collection(db, 'settings_history'), {
+            changedFields,
+            actorId: currentUser?.id || null,
+            actorName: currentUser?.name || 'Admin',
+            createdAt: serverTimestamp()
+          });
+        }
+      } catch (histErr) {
+        console.warn('Falha ao registrar histórico:', histErr);
+      }
+
       alert('✅ Configurações atualizadas com sucesso!');
     } catch (error) {
       console.error('❌ Erro ao salvar:', error);
-      alert('❌ Erro ao salvar: ' + error.message);
+      alert('❌ Erro ao salvar: ' + (error?.message || 'erro'));
     }
   };
 
@@ -3274,242 +3508,426 @@ const AdminPanel = ({ setView }) => {
         {activeTab === 'settings' && (
           <div>
             <h2 className="text-2xl font-bold mb-6">Configurações</h2>
-            
-            <div className="space-y-6 max-w-3xl">
-              {/* Valor da Aposta */}
-              <div className="bg-white rounded-xl shadow-sm border p-6">
-                <h3 className="text-lg font-bold mb-4 flex items-center gap-2">
-                  <DollarSign size={24} className="text-green-600" />
-                  Valor da Aposta
-                </h3>
-                <p className="text-gray-600 text-sm mb-4">
-                  Defina o valor que será cobrado por participação em cada rodada
-                </p>
-                <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-4">
-                  <div className="flex-1">
-                    <label className="block text-sm font-medium mb-2">Valor por Cartela (R$)</label>
-                    <input
-                      type="number"
-                      min="1"
-                      step="0.50"
-                      value={betValue}
-                      onChange={(e) => setBetValue(e.target.value)}
-                      className="w-full px-4 py-3 border rounded-lg text-lg font-bold"
-                      placeholder="15.00"
-                    />
-                  </div>
-                  <div className="pt-2 sm:pt-8 w-full sm:w-auto">
-                    <button
-                      onClick={handleSaveWhatsAppMessage}
-                      className="w-full sm:w-auto px-6 py-3 bg-green-600 text-white rounded-lg font-semibold hover:bg-green-700"
-                    >
-                      Salvar
-                    </button>
-                  </div>
-                </div>
-                <div className="mt-4 p-4 bg-blue-50 rounded-lg">
-                  <p className="text-sm text-blue-800">
-                    <strong>Distribuição:</strong> 85% Premiação • 10% Admin • 5% Estabelecimento (por palpite vinculado)
-                  </p>
-                </div>
-              </div>
-
-              {/* Mensagem WhatsApp */}
-              <div className="bg-white rounded-xl shadow-sm border p-6">
-                <h3 className="text-lg font-bold mb-4">Mensagem do WhatsApp</h3>
-                <p className="text-gray-600 text-sm mb-4">
-                  Personalize a mensagem enviada quando um usuário confirma seus palpites. Use as variáveis:
-                </p>
-                <div className="bg-blue-50 border border-blue-200 rounded-lg p-4 mb-4">
-                  <p className="text-sm font-mono"><strong>{'{RODADA}'}</strong> - Nome da rodada</p>
-                  <p className="text-sm font-mono"><strong>{'{CARTELA}'}</strong> - Código da cartela</p>
-                  <p className="text-sm font-mono"><strong>{'{PALPITES}'}</strong> - Lista de palpites do usuário</p>
-                </div>
-
-                <textarea
-                  value={whatsappMessage}
-                  onChange={(e) => setWhatsappMessage(e.target.value)}
-                  className="w-full px-4 py-3 border rounded-lg font-mono text-sm"
-                  rows="10"
-                  placeholder="🏆 *BOLÃO BRASILEIRÃO 2025*&#10;&#10;📋 *{RODADA}*&#10;🎫 *Cartela: {CARTELA}*&#10;✅ Confirmado!&#10;&#10;{PALPITES}&#10;&#10;💰 R$ 15,00&#10;⚠️ *Não pode alterar após pagamento*&#10;&#10;Boa sorte! 🍀"
-                />
-
-                <div className="flex flex-col sm:flex-row sm:justify-end gap-3 mt-4">
-                  <button
-                    onClick={() => {
-                      setWhatsappMessage(settings?.whatsappMessage || '🏆 *BOLÃO BRASILEIRÃO 2025*\n\n📋 *{RODADA}*\n🎫 *Cartela: {CARTELA}*\n✅ Confirmado!\n\n{PALPITES}\n\n💰 R$ 15,00\n⚠️ *Não pode alterar após pagamento*\n\nBoa sorte! 🍀');
-                      setBetValue(settings?.betValue || 15);
-                    }}
-                    className="w-full sm:w-auto px-6 py-2 border rounded-lg"
-                  >
-                    Restaurar Padrão
+            <div className="bg-white rounded-xl border p-2 mb-6">
+              <div className="flex gap-3 overflow-x-auto">
+                {[
+                  { key: 'whatsapp', label: 'Configurações do WhatsApp', icon: Send },
+                  { key: 'maintenance', label: 'Modo de Manutenção', icon: AlertCircle },
+                  { key: 'rules', label: 'Regras', icon: FileText },
+                  { key: 'bet', label: 'Valor de Aposta', icon: DollarSign },
+                  { key: 'payment', label: 'API de Pagamento', icon: Key },
+                  { key: 'abtests', label: 'Testes A/B', icon: TrendingUp }
+                ].map(t => (
+                  <button key={t.key} onClick={() => setSettingsTab(t.key)} className={`px-3 py-2 rounded-lg border ${settingsTab === t.key ? 'bg-green-50 border-green-300 text-green-700' : 'bg-white border-gray-200 text-gray-700'}`}>
+                    <span className="inline-flex items-center gap-2"><t.icon size={18} />{t.label}</span>
                   </button>
-                  <button
-                    onClick={handleSaveWhatsAppMessage}
-                    className="w-full sm:w-auto px-6 py-2 bg-green-600 text-white rounded-lg"
-                  >
-                    Salvar Configurações
-                  </button>
+                ))}
+              </div>
+            </div>
+
+            {/* WhatsApp Settings */}
+            {settingsTab === 'whatsapp' && (
+              <div className="space-y-6 max-w-3xl">
+                <div className="bg-white rounded-xl shadow-sm border p-6">
+                  <h3 className="text-lg font-bold mb-4">Credenciais e Notificações</h3>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 mb-4">
+                    <div>
+                      <label className="block text-sm font-medium mb-2">Provedor do WhatsApp</label>
+                      <select value={whatsappProvider} onChange={(e) => setWhatsappProvider(e.target.value)} className="w-full px-4 py-3 border rounded-lg">
+                        <option value="evolution">Evolution API</option>
+                        <option value="cloud">WhatsApp Cloud API</option>
+                      </select>
+                    </div>
+                  </div>
+                  {whatsappProvider === 'cloud' && (
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                      <div>
+                        <label className="block text-sm font-medium mb-2">Token da API</label>
+                        <input type="text" value={whatsappApiToken} onChange={(e) => setWhatsappApiToken(e.target.value)} className="w-full px-4 py-3 border rounded-lg" placeholder="token" />
+                      </div>
+                      <div>
+                        <label className="block text-sm font-medium mb-2">Número associado (WhatsApp)</label>
+                        <input type="text" value={whatsappNumber} onChange={(e) => setWhatsappNumber(e.target.value)} className="w-full px-4 py-3 border rounded-lg" placeholder="5599999999999" />
+                      </div>
+                    </div>
+                  )}
+                  {whatsappProvider === 'evolution' && (
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                      <div className="sm:col-span-2">
+                        <label className="block text-sm font-medium mb-2">Link do servidor (Evolution)</label>
+                        <input type="text" value={devolutionLink} onChange={(e) => setDevolutionLink(e.target.value)} className="w-full px-4 py-3 border rounded-lg" placeholder="https://seu-servidor-evolution" />
+                      </div>
+                      <div>
+                        <label className="block text-sm font-medium mb-2">Instância (Evolution)</label>
+                        <input type="text" value={devolutionInstance} onChange={(e) => setDevolutionInstance(e.target.value)} className="w-full px-4 py-3 border rounded-lg" placeholder="minha-instancia" />
+                      </div>
+                      <div>
+                        <label className="block text-sm font-medium mb-2">Token (Evolution)</label>
+                        <input type="text" value={devolutionToken} onChange={(e) => setDevolutionToken(e.target.value)} className="w-full px-4 py-3 border rounded-lg" placeholder="apikey" />
+                      </div>
+                    </div>
+                  )}
+                  <div className="mt-4 flex items-center gap-3">
+                    <label className="flex items-center gap-2">
+                      <input type="checkbox" checked={whatsappNotifyEnabled} onChange={(e) => setWhatsappNotifyEnabled(e.target.checked)} />
+                      <span>Ativar notificações</span>
+                    </label>
+                  </div>
+                  <div className="mt-2 grid grid-cols-1 sm:grid-cols-3 gap-3">
+                    <label className="flex items-center gap-2"><input type="checkbox" checked={!!whatsappNotifyEvents.charges} onChange={(e) => setWhatsappNotifyEvents({ ...whatsappNotifyEvents, charges: e.target.checked })} />Cobranças</label>
+                    <label className="flex items-center gap-2"><input type="checkbox" checked={!!whatsappNotifyEvents.approvals} onChange={(e) => setWhatsappNotifyEvents({ ...whatsappNotifyEvents, approvals: e.target.checked })} />Confirmações</label>
+                    <label className="flex items-center gap-2"><input type="checkbox" checked={!!whatsappNotifyEvents.results} onChange={(e) => setWhatsappNotifyEvents({ ...whatsappNotifyEvents, results: e.target.checked })} />Resultados</label>
+                  </div>
                 </div>
 
-                <div className="mt-6 p-4 bg-gray-50 rounded-lg">
-                  <h4 className="font-semibold mb-2">Prévia:</h4>
-                  <div className="bg-white p-4 rounded border text-sm whitespace-pre-wrap font-mono">
-                    {whatsappMessage
-                      .replace('{RODADA}', 'Rodada 1')
-                      .replace('{CARTELA}', 'CART-ABC123')
-                      .replace('{PALPITES}', '1. Palmeiras 2 x 1 Flamengo\n2. Corinthians 1 x 1 Santos')}
+                <div className="bg-white rounded-xl shadow-sm border p-6">
+                  <h3 className="text-lg font-bold mb-4">Template de Mensagens Padrão</h3>
+                  <p className="text-gray-600 text-sm mb-4">Use {'{RODADA}'}, {'{CARTELA}'}, {'{PALPITES}'}.</p>
+                  <textarea value={whatsappMessage} onChange={(e) => setWhatsappMessage(e.target.value)} className="w-full px-4 py-3 border rounded-lg font-mono text-sm" rows="8" />
+                  <div className="mt-4">
+                    <label className="block text-sm font-medium mb-2">Template de Cobrança</label>
+                    <textarea value={chargeMessageTemplate} onChange={(e) => setChargeMessageTemplate(e.target.value)} className="w-full px-4 py-3 border rounded-lg font-mono text-sm" rows="6" />
+                  </div>
+                  <div className="flex sm:justify-end gap-3 mt-4">
+                    <button onClick={() => { setWhatsappApiToken(''); setWhatsappNumber(''); setDevolutionLink(''); setDevolutionInstance(''); setDevolutionToken(''); setWhatsappNotifyEnabled(true); setWhatsappNotifyEvents({ charges: true, approvals: true, results: true }); setWhatsappMessage(settings?.whatsappMessage || '🏆 *BOLÃO BRASILEIRÃO 2025*\n\n📋 *{RODADA}*\n🎫 *Cartela: {CARTELA}*\n✅ Confirmado!\n\n{PALPITES}\n\n💰 R$ 15,00\n⚠️ *Não pode alterar após pagamento*\n\nBoa sorte! 🍀'); setChargeMessageTemplate(settings?.chargeMessageTemplate || 'Olá {NOME},\n\nIdentificamos que o pagamento da sua cartela da {RODADA} ainda está pendente.\n\nValor: R$ {VALOR}\nCartela: {CARTELA}\n\nPor favor, conclua o pagamento para validar sua participação no ranking e na premiação. Obrigado! 🙏'); }} className="px-6 py-2 border rounded-lg inline-flex items-center gap-2"><RefreshCcw size={16} />Restaurar Padrões</button>
+                    <button onClick={handleSaveWhatsAppMessage} className="px-6 py-2 bg-green-600 text-white rounded-lg">Salvar</button>
                   </div>
                 </div>
               </div>
+            )}
 
-              {/* Template de Cobrança (Financeiro) */}
-              <div className="bg-white rounded-xl shadow-sm border p-6">
-                <h3 className="text-lg font-bold mb-4 flex items-center gap-2">
-                  <Megaphone size={24} className="text-green-600" />
-                  Template de Cobrança (WhatsApp)
-                </h3>
-                <p className="text-gray-600 text-sm mb-4">
-                  Mensagem usada para cobrar participantes com pagamento pendente. Suporta variáveis {'{NOME}'}, {'{RODADA}'}, {'{VALOR}'}, {'{CARTELA}'}.
-                </p>
-                <textarea
-                  value={chargeMessageTemplate}
-                  onChange={(e) => setChargeMessageTemplate(e.target.value)}
-                  className="w-full px-4 py-3 border rounded-lg font-mono text-sm"
-                  rows="8"
-                  placeholder={chargeMessageTemplate}
-                />
-                <div className="flex sm:justify-end gap-3 mt-4">
-                  <button onClick={handleSaveWhatsAppMessage} className="w-full sm:w-auto px-6 py-2 bg-green-600 text-white rounded-lg">Salvar Template</button>
+            {/* Maintenance */}
+            {settingsTab === 'maintenance' && (
+              <div className="space-y-6 max-w-3xl">
+                <div className="bg-white rounded-xl shadow-sm border p-6">
+                  <h3 className="text-lg font-bold mb-4">Modo de Manutenção</h3>
+                  <div className="flex items-center gap-3 mb-4">
+                    <label className="flex items-center gap-2"><input type="checkbox" checked={maintenanceMode} onChange={(e) => setMaintenanceMode(e.target.checked)} /><span>Ativar</span></label>
+                  </div>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                    <div className="sm:col-span-2">
+                      <label className="block text-sm font-medium mb-2">Mensagem</label>
+                      <textarea value={maintenanceMessage} onChange={(e) => setMaintenanceMessage(e.target.value)} className="w-full px-4 py-3 border rounded-lg" rows="4" />
+                    </div>
+                    <div>
+                      <label className="block text-sm font-medium mb-2">Retorno Estimado</label>
+                      <input type="datetime-local" value={maintenanceUntilInput} onChange={(e) => setMaintenanceUntilInput(e.target.value)} className="w-full px-4 py-3 border rounded-lg" />
+                    </div>
+                    <div className="sm:col-span-2">
+                      <label className="block text-sm font-medium mb-2">Acesso por IP (durante manutenção)</label>
+                      <input type="text" value={maintenanceAllowedIps} onChange={(e) => setMaintenanceAllowedIps(e.target.value)} className="w-full px-4 py-3 border rounded-lg" placeholder="127.0.0.1, 10.0.0.1" />
+                    </div>
+                    <div>
+                      <label className="block text-sm font-medium mb-2">Agendar início</label>
+                      <input type="datetime-local" value={maintenanceScheduleStart} onChange={(e) => setMaintenanceScheduleStart(e.target.value)} className="w-full px-4 py-3 border rounded-lg" />
+                    </div>
+                    <div>
+                      <label className="block text-sm font-medium mb-2">Agendar fim</label>
+                      <input type="datetime-local" value={maintenanceScheduleEnd} onChange={(e) => setMaintenanceScheduleEnd(e.target.value)} className="w-full px-4 py-3 border rounded-lg" />
+                    </div>
+                  </div>
+                  <div className="flex sm:justify-end gap-3 mt-4">
+                    <button onClick={() => { setMaintenanceMode(false); setMaintenanceMessage('Estamos realizando uma manutenção programada para melhorar sua experiência. Por favor, tente novamente em breve.'); setMaintenanceUntilInput(''); setMaintenanceAllowedIps(''); setMaintenanceScheduleStart(''); setMaintenanceScheduleEnd(''); }} className="px-6 py-2 border rounded-lg inline-flex items-center gap-2"><RefreshCcw size={16} />Restaurar Padrões</button>
+                    <button onClick={handleSaveWhatsAppMessage} className="px-6 py-2 bg-green-600 text-white rounded-lg">Salvar</button>
+                  </div>
                 </div>
               </div>
+            )}
 
-              {/* Configuração Devolution API */}
-              <div className="bg-white rounded-xl shadow-sm border p-6">
-                <h3 className="text-lg font-bold mb-4 flex items-center gap-2">
-                  <Key size={24} className="text-green-600" />
-                  Configuração Devolution API
-                </h3>
-                <p className="text-gray-600 text-sm mb-4">Preencha os dados da API para envio de cobranças pelo WhatsApp.</p>
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                  <div>
-                    <label className="block text-sm font-medium mb-2">Link base</label>
-                    <input type="text" value={devolutionLink} onChange={(e) => setDevolutionLink(e.target.value)} className="w-full px-4 py-3 border rounded-lg" placeholder="https://api.exemplo.com" />
+            {/* Rules */}
+            {settingsTab === 'rules' && (
+              <div className="space-y-6 max-w-3xl">
+                <div className="bg-white rounded-xl shadow-sm border p-6">
+                  <h3 className="text-lg font-bold mb-4">Termos, Políticas e Compliance</h3>
+                  <div className="space-y-4">
+                    <div>
+                      <label className="block text-sm font-medium mb-2">Termos de Uso</label>
+                      <textarea value={termsOfUse} onChange={(e) => setTermsOfUse(e.target.value)} className="w-full px-4 py-3 border rounded-lg text-sm" rows="4" />
+                    </div>
+                    <div>
+                      <label className="block text-sm font-medium mb-2">Políticas do Sistema</label>
+                      <textarea value={systemPolicies} onChange={(e) => setSystemPolicies(e.target.value)} className="w-full px-4 py-3 border rounded-lg text-sm" rows="4" />
+                    </div>
+                    <div>
+                      <label className="block text-sm font-medium mb-2">Limites e Restrições</label>
+                      <textarea value={limitsRestrictions} onChange={(e) => setLimitsRestrictions(e.target.value)} className="w-full px-4 py-3 border rounded-lg text-sm" rows="4" />
+                    </div>
+                    <div>
+                      <label className="block text-sm font-medium mb-2">Configurações de Compliance</label>
+                      <textarea value={complianceConfig} onChange={(e) => setComplianceConfig(e.target.value)} className="w-full px-4 py-3 border rounded-lg text-sm" rows="4" />
+                    </div>
                   </div>
-                  <div>
-                    <label className="block text-sm font-medium mb-2">Instance Name</label>
-                    <input type="text" value={devolutionInstance} onChange={(e) => setDevolutionInstance(e.target.value)} className="w-full px-4 py-3 border rounded-lg" placeholder="minha-instancia" />
-                  </div>
-                  <div className="sm:col-span-2">
-                    <label className="block text-sm font-medium mb-2">Token</label>
-                    <input type="text" value={devolutionToken} onChange={(e) => setDevolutionToken(e.target.value)} className="w-full px-4 py-3 border rounded-lg" placeholder="seu-token" />
+                  <div className="flex sm:justify-end gap-3 mt-4">
+                    <button onClick={() => { setTermsOfUse(''); setSystemPolicies(''); setLimitsRestrictions(''); setComplianceConfig(''); }} className="px-6 py-2 border rounded-lg inline-flex items-center gap-2"><RefreshCcw size={16} />Restaurar Padrões</button>
+                    <button onClick={handleSaveWhatsAppMessage} className="px-6 py-2 bg-green-600 text-white rounded-lg">Salvar</button>
                   </div>
                 </div>
-                <div className="flex sm:justify-end gap-3 mt-4">
-                  <button onClick={handleSaveWhatsAppMessage} className="w-full sm:w-auto px-6 py-2 bg-green-600 text-white rounded-lg">Salvar Configuração</button>
-                </div>
-              </div>
 
-              {/* Modo de Manutenção */}
-              <div className="bg-white rounded-xl shadow-sm border p-6">
-                <h3 className="text-lg font-bold mb-4 flex items-center gap-2">
-                  <AlertCircle size={24} className="text-green-600" />
-                  Modo de Manutenção
-                </h3>
-                <p className="text-gray-600 text-sm mb-4">
-                  Quando ativado, usuários não administradores verão uma tela de manutenção ao tentar acessar o sistema.
-                </p>
-                <div className="flex items-center gap-3 mb-4">
-                  <label className="flex items-center gap-2">
-                    <input type="checkbox" checked={maintenanceMode} onChange={(e) => setMaintenanceMode(e.target.checked)} />
-                    <span className="font-medium">Ativar modo de manutenção</span>
-                  </label>
-                </div>
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                  <div className="sm:col-span-2">
-                    <label className="block text-sm font-medium mb-2">Mensagem</label>
-                    <textarea value={maintenanceMessage} onChange={(e) => setMaintenanceMessage(e.target.value)} className="w-full px-4 py-3 border rounded-lg" rows="4" placeholder="Mensagem de manutenção" />
-                  </div>
-                  <div>
-                    <label className="block text-sm font-medium mb-2">Retorno Estimado</label>
-                    <input type="datetime-local" value={maintenanceUntilInput} onChange={(e) => setMaintenanceUntilInput(e.target.value)} className="w-full px-4 py-3 border rounded-lg" />
-                  </div>
-                </div>
-                <div className="flex sm:justify-end gap-3 mt-4">
-                  <button onClick={handleSaveWhatsAppMessage} className="w-full sm:w-auto px-6 py-2 bg-green-600 text-white rounded-lg">Salvar Manutenção</button>
-                </div>
-                <div className="mt-4 p-4 bg-yellow-50 rounded-lg text-sm text-yellow-800">
-                  <p>Um registro de log será criado quando a manutenção for ativada ou desativada.</p>
-                </div>
-              </div>
-
-              {/* Regras do Bolão (Editor com formatação e prévia) */}
-              <div className="bg-white rounded-xl shadow-sm border p-6">
-                <h3 className="text-lg font-bold mb-4 flex items-center gap-2">
-                  <FileText size={24} className="text-green-600" />
-                  Regras do Bolão
-                </h3>
-                <p className="text-gray-600 text-sm mb-4">
-                  Edite o texto das regras com formatação básica (negrito, itálico, listas).
-                  As alterações são salvas automaticamente.
-                </p>
-                <div className="space-y-3">
-                  <div className="flex gap-2 flex-wrap">
-                    <button onClick={() => wrapSelection('**','**')} className="px-3 py-2 border rounded-lg text-sm font-semibold">N</button>
-                    <button onClick={() => wrapSelection('*','*')} className="px-3 py-2 border rounded-lg text-sm italic">I</button>
-                    <button onClick={() => makeList(false)} className="px-3 py-2 border rounded-lg text-sm">• Lista</button>
-                    <button onClick={() => makeList(true)} className="px-3 py-2 border rounded-lg text-sm">1. Lista</button>
-                  </div>
-                  <textarea
-                    ref={rulesTextareaRef}
-                    value={rulesText}
-                    onChange={(e) => { initialLoadRef.current = false; setRulesText(e.target.value); }}
-                    className="w-full px-4 py-3 border rounded-lg text-sm"
-                    rows="8"
-                    placeholder="Use **negrito**, *itálico* e crie listas com '-' ou '1.'"
-                  />
-                  <div className="mt-4 p-4 bg-gray-50 rounded-lg">
-                    <h4 className="font-semibold mb-2">Prévia formatada:</h4>
-                    <div className="text-sm text-gray-800">
-                      <div dangerouslySetInnerHTML={{ __html: markdownToHtml(rulesText) }} />
+                <div className="bg-white rounded-xl shadow-sm border p-6">
+                  <h3 className="text-lg font-bold mb-4 flex items-center gap-2"><FileText size={24} className="text-green-600" />Regras do Bolão</h3>
+                  <div className="space-y-3">
+                    <div className="flex gap-2 flex-wrap">
+                      <button onClick={() => wrapSelection('**','**')} className="px-3 py-2 border rounded-lg text-sm font-semibold">N</button>
+                      <button onClick={() => wrapSelection('*','*')} className="px-3 py-2 border rounded-lg text-sm italic">I</button>
+                      <button onClick={() => makeList(false)} className="px-3 py-2 border rounded-lg text-sm">• Lista</button>
+                      <button onClick={() => makeList(true)} className="px-3 py-2 border rounded-lg text-sm">1. Lista</button>
+                    </div>
+                    <textarea ref={rulesTextareaRef} value={rulesText} onChange={(e) => { initialLoadRef.current = false; setRulesText(e.target.value); }} className="w-full px-4 py-3 border rounded-lg text-sm" rows="8" />
+                    <div className="mt-4 p-4 bg-gray-50 rounded-lg">
+                      <h4 className="font-semibold mb-2">Prévia formatada</h4>
+                      <div className="text-sm text-gray-800" dangerouslySetInnerHTML={{ __html: markdownToHtml(rulesText) }} />
                     </div>
                   </div>
                 </div>
-              </div>
 
-              {/* Critérios de Pontuação */}
-              <div className="bg-white rounded-xl shadow-sm border p-6 mt-6">
-                <h3 className="text-lg font-bold mb-4">Critérios de Pontuação</h3>
-                <p className="text-gray-600 text-sm mb-4">Este campo suporta Markdown básico. Veja a prévia abaixo.</p>
-                <textarea
-                  value={scoringCriteria}
-                  onChange={(e) => { initialLoadRef.current = false; setScoringCriteria(e.target.value); }}
-                  className="w-full px-4 py-3 border rounded-lg text-sm"
-                  rows="6"
-                  placeholder="Ex.:\n- Placar exato: **3 pontos**\n- Resultado correto: *1 ponto*"
-                />
-                <div className="mt-4 p-4 bg-gray-50 rounded-lg">
-                  <h4 className="font-semibold mb-2">Prévia formatada:</h4>
-                  <div className="text-sm text-gray-800" dangerouslySetInnerHTML={{ __html: markdownToHtml(scoringCriteria) }} />
+                <div className="bg-white rounded-xl shadow-sm border p-6">
+                  <h3 className="text-lg font-bold mb-4">Critérios de Pontuação</h3>
+                  <textarea value={scoringCriteria} onChange={(e) => { initialLoadRef.current = false; setScoringCriteria(e.target.value); }} className="w-full px-4 py-3 border rounded-lg text-sm" rows="6" />
+                  <div className="mt-4 p-4 bg-gray-50 rounded-lg"><div className="text-sm text-gray-800" dangerouslySetInnerHTML={{ __html: markdownToHtml(scoringCriteria) }} /></div>
+                </div>
+
+                <div className="bg-white rounded-xl shadow-sm border p-6">
+                  <h3 className="text-lg font-bold mb-4">Regras de Desempate</h3>
+                  <textarea value={tiebreakRules} onChange={(e) => { initialLoadRef.current = false; setTiebreakRules(e.target.value); }} className="w-full px-4 py-3 border rounded-lg text-sm" rows="6" />
+                  <div className="mt-4 p-4 bg-gray-50 rounded-lg"><div className="text-sm text-gray-800" dangerouslySetInnerHTML={{ __html: markdownToHtml(tiebreakRules) }} /></div>
+                  <div className="flex sm:justify-end gap-3 mt-4">
+                    <button onClick={() => { setRulesText(DEFAULT_RULES_MD); setScoringCriteria(DEFAULT_SCORING_MD); setTiebreakRules(DEFAULT_TIEBREAK_MD); }} className="px-6 py-2 border rounded-lg inline-flex items-center gap-2"><RefreshCcw size={16} />Restaurar Padrões</button>
+                    <button onClick={handleSaveWhatsAppMessage} className="px-6 py-2 bg-green-600 text-white rounded-lg">Salvar</button>
+                  </div>
                 </div>
               </div>
+            )}
 
-              {/* Regras de Desempate */}
-              <div className="bg-white rounded-xl shadow-sm border p-6 mt-6">
-                <h3 className="text-lg font-bold mb-4">Regras de Desempate</h3>
-                <p className="text-gray-600 text-sm mb-4">Este campo suporta Markdown básico. Veja a prévia abaixo.</p>
-                <textarea
-                  value={tiebreakRules}
-                  onChange={(e) => { initialLoadRef.current = false; setTiebreakRules(e.target.value); }}
-                  className="w-full px-4 py-3 border rounded-lg text-sm"
-                  rows="6"
-                  placeholder="Ex.:\n1. Maior número de placares exatos\n2. Maior número de acertos de resultado"
-                />
-                <div className="mt-4 p-4 bg-gray-50 rounded-lg">
-                  <h4 className="font-semibold mb-2">Prévia formatada:</h4>
-                  <div className="text-sm text-gray-800" dangerouslySetInnerHTML={{ __html: markdownToHtml(tiebreakRules) }} />
+            {/* Bet Value */}
+            {settingsTab === 'bet' && (
+              <div className="space-y-6 max-w-3xl">
+                <div className="bg-white rounded-xl shadow-sm border p-6">
+                  <h3 className="text-lg font-bold mb-4 flex items-center gap-2"><DollarSign size={24} className="text-green-600" />Valor de Aposta</h3>
+                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+                    <div>
+                      <label className="block text-sm font-medium mb-2">Valor por Cartela (R$)</label>
+                      <input type="number" min="1" step="0.50" value={betValue} onChange={(e) => setBetValue(e.target.value)} className="w-full px-4 py-3 border rounded-lg" />
+                    </div>
+                    <div>
+                      <label className="block text-sm font-medium mb-2">Mínimo (R$)</label>
+                      <input type="number" min="0" step="0.50" value={minBet} onChange={(e) => setMinBet(e.target.value)} className="w-full px-4 py-3 border rounded-lg" />
+                    </div>
+                    <div>
+                      <label className="block text-sm font-medium mb-2">Máximo (R$)</label>
+                      <input type="number" min="0" step="0.50" value={maxBet} onChange={(e) => setMaxBet(e.target.value)} className="w-full px-4 py-3 border rounded-lg" />
+                    </div>
+                  </div>
+                  <div className="mt-4">
+                    <label className="block text-sm font-medium mb-2">Limites por tipo de aposta</label>
+                    <textarea value={limitsByTypeText} onChange={(e) => setLimitsByTypeText(e.target.value)} className="w-full px-4 py-3 border rounded-lg text-sm" rows="4" placeholder="Defina regras por tipo, ex.: Simples: máx 1 cartela; Duplas: máx 2, etc." />
+                  </div>
+                  <div className="mt-4 grid grid-cols-1 sm:grid-cols-3 gap-4">
+                    <div className="flex items-center gap-2">
+                      <input type="checkbox" checked={!!bonusEnabled} onChange={(e) => setBonusEnabled(e.target.checked)} />
+                      <span>Bônus ativo</span>
+                    </div>
+                    <div>
+                      <label className="block text-sm font-medium mb-2">Bônus (%)</label>
+                      <input type="number" min="0" max="100" step="0.5" value={bonusPercent} onChange={(e) => setBonusPercent(e.target.value)} className="w-full px-4 py-3 border rounded-lg" />
+                    </div>
+                    <div className="hidden sm:block"></div>
+                  </div>
+                  <div className="mt-4 grid grid-cols-1 sm:grid-cols-2 gap-4">
+                    <div>
+                      <label className="block text-sm font-medium mb-2">Taxa Admin (%)</label>
+                      <input type="number" min="0" max="100" step="0.5" value={adminFeePercent} onChange={(e) => setAdminFeePercent(e.target.value)} className="w-full px-4 py-3 border rounded-lg" />
+                    </div>
+                    <div>
+                      <label className="block text-sm font-medium mb-2">Comissão Estabelecimento (%)</label>
+                      <input type="number" min="0" max="100" step="0.5" value={establishmentPercent} onChange={(e) => setEstablishmentPercent(e.target.value)} className="w-full px-4 py-3 border rounded-lg" />
+                    </div>
+                  </div>
+                  <div className="flex sm:justify-end gap-3 mt-4">
+                    <button onClick={() => { setBetValue(15); setMinBet(10); setMaxBet(100); setBonusEnabled(false); setBonusPercent(0); setAdminFeePercent(10); setEstablishmentPercent(5); setLimitsByTypeText(''); }} className="px-6 py-2 border rounded-lg inline-flex items-center gap-2"><RefreshCcw size={16} />Restaurar Padrões</button>
+                    <button onClick={handleSaveWhatsAppMessage} className="px-6 py-2 bg-green-600 text-white rounded-lg">Salvar</button>
+                  </div>
                 </div>
               </div>
+            )}
+
+            {/* Payment API */}
+            {settingsTab === 'payment' && (
+              <div className="space-y-6 max-w-3xl">
+                <div className="bg-white rounded-xl shadow-sm border p-6">
+                  <h3 className="text-lg font-bold mb-4">Pagamentos (Mercado Pago)</h3>
+                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+                    <div>
+                      <label className="block text-sm font-medium mb-2">Provedor</label>
+                      <select value={paymentProvider} onChange={(e) => setPaymentProvider(e.target.value)} className="w-full px-4 py-3 border rounded-lg">
+                        <option value="mercadopago">Mercado Pago</option>
+                      </select>
+                    </div>
+                    <div className="sm:col-span-2"></div>
+                  </div>
+                  {paymentProvider === 'mercadopago' && (
+                    <div className="mt-4 grid grid-cols-1 sm:grid-cols-2 gap-4">
+                      <div className="p-4 border rounded-lg bg-gray-50">
+                        <p className="text-sm font-medium mb-2">Status da Conexão</p>
+                        {mpConn.loading ? (
+                          <p className="text-gray-500">Carregando...</p>
+                        ) : mpConn.connected ? (
+                          <span className="inline-flex items-center gap-1 bg-green-100 text-green-700 px-3 py-1 rounded-full text-sm"><CheckCircle size={16} /> Conectado</span>
+                        ) : (
+                          <span className="inline-flex items-center gap-1 bg-red-100 text-red-700 px-3 py-1 rounded-full text-sm"><XCircle size={16} /> Desconectado</span>
+                        )}
+                        <div className="mt-3">
+                          <p className="text-sm font-medium">Conta Mercado Pago</p>
+                          <p className="text-gray-700">{mpConn.nickname || '—'} <span className="text-gray-500">{mpConn.email || ''}</span></p>
+                        </div>
+                        <div className="mt-3 flex gap-2">
+                          {!mpConn.connected ? (
+                            <button onClick={connectMercadoPago} className="px-4 py-2 bg-blue-600 text-white rounded-lg inline-flex items-center gap-2"><ExternalLink size={16} /> Conectar minha conta</button>
+                          ) : (
+                            <button onClick={disconnectMercadoPago} className="px-4 py-2 border rounded-lg inline-flex items-center gap-2"><LogOut size={16} /> Desconectar conta</button>
+                          )}
+                        </div>
+                        <p className="text-xs text-gray-500 mt-2">A conexão é 100% automática via OAuth. Nenhum token é exposto no front-end.</p>
+                      </div>
+                      <div className="p-4 border rounded-lg bg-gray-50">
+                        <p className="text-sm font-medium mb-2">Total recebido no mês</p>
+                        <p className="text-2xl font-bold text-green-700">R$ {monthlyTotal.toFixed(2)}</p>
+                        <div className="mt-4">
+                          <label className="block text-sm font-medium mb-2">Webhook URL</label>
+                          <div className="flex items-center gap-2">
+                            <input type="text" value={mpWebhookUrl} readOnly className="flex-1 px-4 py-3 border rounded-lg" />
+                            <button type="button" onClick={async () => { try { await navigator.clipboard.writeText(mpWebhookUrl); alert('URL copiada'); } catch {} }} className="px-3 py-2 border rounded-lg inline-flex items-center gap-2"><Copy size={16} />Copiar</button>
+                          </div>
+                          <p className="text-xs text-gray-600 mt-2">Cole esta URL no painel do Mercado Pago em Webhooks.</p>
+                        </div>
+                      </div>
+                    </div>
+                  )}
+
+                  <div className="mt-4 grid grid-cols-1 sm:grid-cols-3 gap-4">
+                    <label className="flex items-center gap-2"><input type="checkbox" checked={paymentPixEnabled} onChange={(e) => setPaymentPixEnabled(e.target.checked)} />Pix</label>
+                    <label className="flex items-center gap-2"><input type="checkbox" checked={paymentCardEnabled} onChange={(e) => setPaymentCardEnabled(e.target.checked)} />Cartão</label>
+                    <div>
+                      <label className="block text-sm font-medium mb-2">Taxa de Transação (%)</label>
+                      <input type="number" min="0" max="100" step="0.1" value={transactionFeePercent} onChange={(e) => setTransactionFeePercent(e.target.value)} className="w-full px-4 py-3 border rounded-lg" />
+                    </div>
+                  </div>
+                  <div className="mt-4">
+                    <label className="block text-sm font-medium mb-2">IPs permitidos (Webhook/Callbacks)</label>
+                    <input type="text" value={paymentAllowedIps} onChange={(e) => setPaymentAllowedIps(e.target.value)} className="w-full px-4 py-3 border rounded-lg" placeholder="187.191.64.0/20, 10.0.0.2" />
+                  </div>
+                  <div className="mt-4">
+                    <button type="button" onClick={() => setShowAdvancedPayment(!showAdvancedPayment)} className="px-4 py-2 border rounded-lg">Configurações Avançadas</button>
+                  </div>
+                  {showAdvancedPayment && (
+                    <div className="mt-4 grid grid-cols-1 sm:grid-cols-3 gap-4">
+                      <div>
+                        <label className="block text-sm font-medium mb-2">Cabeçalho de Assinatura</label>
+                        <input type="text" value={signatureHeaderName} onChange={(e) => setSignatureHeaderName(e.target.value)} className="w-full px-4 py-3 border rounded-lg" placeholder="x-signature" />
+                      </div>
+                      <div>
+                        <label className="block text-sm font-medium mb-2">Tentativas</label>
+                        <input type="number" min="0" step="1" value={paymentRetries} onChange={(e) => setPaymentRetries(e.target.value)} className="w-full px-4 py-3 border rounded-lg" />
+                      </div>
+                      <div>
+                        <label className="block text-sm font-medium mb-2">Timeout (ms)</label>
+                        <input type="number" min="1000" step="100" value={paymentTimeoutMs} onChange={(e) => setPaymentTimeoutMs(e.target.value)} className="w-full px-4 py-3 border rounded-lg" />
+                      </div>
+                    </div>
+                  )}
+                  <div className="flex sm:justify-end gap-3 mt-4">
+                    <button onClick={() => { setPaymentProvider('mercadopago'); setPaymentPixEnabled(true); setPaymentCardEnabled(false); setTransactionFeePercent(0); setPaymentAllowedIps(''); setSignatureHeaderName('x-signature'); setPaymentRetries(3); setPaymentTimeoutMs(10000); setShowAdvancedPayment(false); }} className="px-6 py-2 border rounded-lg inline-flex items-center gap-2"><RefreshCcw size={16} />Restaurar Padrões</button>
+                    <button onClick={handleSaveWhatsAppMessage} className="px-6 py-2 bg-green-600 text-white rounded-lg">Salvar</button>
+                  </div>
+                </div>
+
+                {/* Histórico de Pagamentos */}
+                <div className="bg-white rounded-xl shadow-sm border p-6">
+                  <h4 className="text-md font-bold mb-3">Pagamentos realizados</h4>
+                  {adminPayments.length === 0 ? (
+                    <p className="text-gray-500 text-sm">Nenhum pagamento registrado ainda.</p>
+                  ) : (
+                    <div className="overflow-x-auto -mx-2 sm:mx-0">
+                      <table className="min-w-[720px] w-full text-xs sm:text-sm">
+                        <thead className="bg-gray-50 border-b">
+                          <tr>
+                            <th className="px-4 sm:px-6 py-3 sm:py-4 text-left text-[10px] sm:text-xs font-medium text-gray-500 uppercase">Data</th>
+                            <th className="px-4 sm:px-6 py-3 sm:py-4 text-left text-[10px] sm:text-xs font-medium text-gray-500 uppercase">Usuário</th>
+                            <th className="px-4 sm:px-6 py-3 sm:py-4 text-left text-[10px] sm:text-xs font-medium text-gray-500 uppercase">Valor</th>
+                            <th className="px-4 sm:px-6 py-3 sm:py-4 text-left text-[10px] sm:text-xs font-medium text-gray-500 uppercase">Status</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {adminPayments.slice(0,100).map((p) => {
+                            const u = users.find(u => u.id === p.userId);
+                            const dt = p.createdAt?.toDate ? p.createdAt.toDate() : null;
+                            const dateStr = dt ? dt.toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit', year: 'numeric' }) : '—';
+                            return (
+                              <tr key={p.id} className="border-b">
+                                <td className="px-4 sm:px-6 py-3 sm:py-4">{dateStr}</td>
+                                <td className="px-4 sm:px-6 py-3 sm:py-4">{u?.name || p.userId}</td>
+                                <td className="px-4 sm:px-6 py-3 sm:py-4">R$ {(Number(p.amount) || 0).toFixed(2)}</td>
+                                <td className="px-4 sm:px-6 py-3 sm:py-4">
+                                  {p.status === 'approved' ? (
+                                    <span className="inline-flex items-center gap-1 bg-green-100 text-green-700 px-3 py-1 rounded-full text-sm font-medium"><CheckCircle size={16} /> Pago</span>
+                                  ) : p.status === 'pending' ? (
+                                    <span className="inline-flex items-center gap-1 bg-yellow-100 text-yellow-700 px-3 py-1 rounded-full text-sm font-medium">Pendente</span>
+                                  ) : (
+                                    <span className="inline-flex items-center gap-1 bg-red-100 text-red-700 px-3 py-1 rounded-full text-sm font-medium"><XCircle size={16} /> Recusado</span>
+                                  )}
+                                </td>
+                              </tr>
+                            );
+                          })}
+                        </tbody>
+                      </table>
+                    </div>
+                  )}
+                </div>
+              </div>
+            )}
+
+            {/* A/B Tests */}
+            {settingsTab === 'abtests' && (
+              <div className="space-y-6 max-w-3xl">
+                <div className="bg-white rounded-xl shadow-sm border p-6">
+                  <h3 className="text-lg font-bold mb-4">Testes A/B</h3>
+                  <div className="flex items-center gap-3 mb-4">
+                    <label className="flex items-center gap-2"><input type="checkbox" checked={abTestsEnabled} onChange={(e) => setAbTestsEnabled(e.target.checked)} /><span>Ativar Testes A/B</span></label>
+                  </div>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                    <div>
+                      <label className="block text-sm font-medium mb-2">Novo Dashboard (%)</label>
+                      <input type="number" min="0" max="100" step="1" value={experimentDashboardPercent} onChange={(e) => setExperimentDashboardPercent(e.target.value)} className="w-full px-4 py-3 border rounded-lg" />
+                    </div>
+                    <div>
+                      <label className="block text-sm font-medium mb-2">Fluxo de Pagamento V2 (%)</label>
+                      <input type="number" min="0" max="100" step="1" value={experimentPaymentFlowPercent} onChange={(e) => setExperimentPaymentFlowPercent(e.target.value)} className="w-full px-4 py-3 border rounded-lg" />
+                    </div>
+                  </div>
+                  <div className="flex sm:justify-end gap-3 mt-4">
+                    <button onClick={() => { setAbTestsEnabled(false); setExperimentDashboardPercent(0); setExperimentPaymentFlowPercent(0); }} className="px-6 py-2 border rounded-lg inline-flex items-center gap-2"><RefreshCcw size={16} />Restaurar Padrões</button>
+                    <button onClick={handleSaveWhatsAppMessage} className="px-6 py-2 bg-green-600 text-white rounded-lg">Salvar</button>
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {/* Histórico de alterações */}
+            <div className="mt-8 bg-white rounded-xl shadow-sm border p-6 max-w-3xl">
+              <h3 className="text-lg font-bold mb-4 flex items-center gap-2"><History size={20} />Histórico de Alterações</h3>
+              {settingsHistory.length === 0 ? (
+                <p className="text-sm text-gray-600">Nenhuma alteração registrada ainda.</p>
+              ) : (
+                <div className="space-y-3">
+                  {settingsHistory.map(item => (
+                    <div key={item.id} className="border rounded-lg p-3">
+                      <p className="text-sm text-gray-800"><span className="font-medium">Autor:</span> {item.actorName || 'Admin'}</p>
+                      <p className="text-sm text-gray-800"><span className="font-medium">Campos:</span> {(item.changedFields || []).join(', ')}</p>
+                      <p className="text-xs text-gray-600">{item.createdAt && typeof item.createdAt.toDate === 'function' ? item.createdAt.toDate().toLocaleString('pt-BR') : ''}</p>
+                    </div>
+                  ))}
+                </div>
+              )}
             </div>
           </div>
         )}
@@ -4385,6 +4803,8 @@ const UserPanel = ({ setView }) => {
   const [showEstablishmentModal, setShowEstablishmentModal] = useState(false);
   const [showRulesModal, setShowRulesModal] = useState(false);
   const [cartelaDetails, setCartelaDetails] = useState(null);
+  const [paymentModalOpen, setPaymentModalOpen] = useState(false);
+  const [paymentContext, setPaymentContext] = useState(null);
 
   // Deep-link para ranking: ?view=user&tab=ranking&round=<id>
   useEffect(() => {
@@ -4844,12 +5264,40 @@ const UserPanel = ({ setView }) => {
                     </div>
                   );
                 })}
+                {(() => {
+                  const pendingCartelas = userCartelas.filter(c => !c.paid);
+                  const pendingCodes = pendingCartelas.map(c => c.code);
+                  const totalAmount = (settings?.betValue || 15) * pendingCartelas.length;
+                  if (pendingCartelas.length === 0) return null;
+                  return (
+                    <div className="bg-blue-50 border border-blue-200 rounded-xl p-4 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3" aria-live="polite">
+                      <div className="flex items-center gap-2">
+                        <DollarSign className="text-blue-600" size={20} />
+                        <p className="text-sm text-blue-800">
+                          Você tem {pendingCartelas.length} participação(ões) pendentes nesta rodada.
+                        </p>
+                      </div>
+                      <button
+                        onClick={() => openPaymentForRound(round, pendingCodes, totalAmount)}
+                        className="px-4 py-2 bg-blue-600 text-white rounded-lg font-semibold hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-400"
+                        aria-label={`Gerar pagamento de ${fmtBRL(totalAmount)} para ${pendingCartelas.length} participação(ões)`}
+                      >
+                        Gerar Pagamento • {fmtBRL(totalAmount)}
+                      </button>
+                    </div>
+                  );
+                })()}
               </div>
             )}
           </div>
         )}
       </div>
     );
+  };
+
+  const openPaymentForRound = (round, cartelaCodes, amount) => {
+    setPaymentContext({ roundId: round.id, roundName: round.name, cartelaCodes, amount });
+    setPaymentModalOpen(true);
   };
 
   const PredictionForm = ({ round, initialPredictions = null }) => {
@@ -5158,6 +5606,214 @@ const UserPanel = ({ setView }) => {
           <div className="p-4 border-t">
             <button onClick={onClose} className="w-full px-4 py-2 border rounded-lg">Fechar</button>
           </div>
+        </div>
+      </div>
+    );
+  };
+
+  const PaymentModal = ({ open, onClose, context, currentUser }) => {
+    const { users } = useApp();
+    const [stage, setStage] = useState('collect'); // collect | creating | showing | approved | error
+    const [error, setError] = useState('');
+    const [tx, setTx] = useState(null);
+    const [copied, setCopied] = useState('');
+    const [timeLeftMs, setTimeLeftMs] = useState(0);
+    const [payer, setPayer] = useState({
+      name: currentUser?.name || '',
+      email: currentUser?.email || '',
+      cpf: '',
+      pixKey: ''
+    });
+    const pollRef = useRef(null);
+
+    useEffect(() => {
+      if (!open) return;
+      setStage('collect'); setError(''); setTx(null); setCopied('');
+    }, [open]);
+
+    useEffect(() => {
+      if (!tx?.expiration) return;
+      const update = () => {
+        const remaining = Math.max(0, new Date(tx.expiration).getTime() - Date.now());
+        setTimeLeftMs(remaining);
+      };
+      update();
+      const id = setInterval(update, 1000);
+      return () => clearInterval(id);
+    }, [tx?.expiration]);
+
+    const formatLeft = () => {
+      const s = Math.floor(timeLeftMs / 1000);
+      const h = Math.floor(s / 3600);
+      const m = Math.floor((s % 3600) / 60);
+      const ss = s % 60;
+      return h > 0
+        ? `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}:${String(ss).padStart(2, '0')}`
+        : `${String(m).padStart(2, '0')}:${String(ss).padStart(2, '0')}`;
+    };
+
+    const handleCreate = async () => {
+      try {
+        setError(''); setStage('creating');
+        // Determine admin responsible (first admin user)
+        const adminUser = users.find(u => u.isAdmin);
+        const adminId = adminUser?.id;
+        if (!adminId) {
+          setStage('error');
+          setError('Administrador não encontrado para criar o pagamento.');
+          return;
+        }
+        const apiBase = import.meta.env.VITE_API_BASE_URL || '';
+        const res = await axios.post(`${apiBase}/api/payments/mercadopago/createPreference`, {
+          adminId,
+          userId: currentUser?.id,
+          roundId: context?.roundId,
+          amount: context?.amount,
+          cartelaCodes: context?.cartelaCodes || [],
+          payer: { name: payer?.name, email: payer?.email }
+        });
+        const data = res.data;
+        setTx({ ...data });
+        // Open checkout in a new tab
+        if (data?.init_point) {
+          try { window.open(data.init_point, '_blank', 'noopener'); } catch {}
+        }
+        setStage('showing');
+        // start polling every 30s
+        if (pollRef.current) clearInterval(pollRef.current);
+        pollRef.current = setInterval(async () => {
+          try {
+            const sres = await axios.get(`${apiBase}/api/payments/status`, { params: { id: data.id } });
+            const status = sres.data?.status;
+            if (status === 'approved') {
+              setStage('approved');
+              clearInterval(pollRef.current);
+            } else if (status === 'rejected') {
+              setError('Pagamento rejeitado. Tente novamente.');
+              setStage('error');
+              clearInterval(pollRef.current);
+            }
+          } catch {}
+        }, 30000);
+      } catch (e) {
+        setError(e?.response?.data?.error || e.message || 'Falha ao criar pagamento');
+        setStage('error');
+      }
+    };
+
+    const handleCopy = async () => {
+      const text = tx?.pixCopiaECola || tx?.qrCode;
+      if (!text) return;
+      try {
+        await navigator.clipboard.writeText(text);
+        setCopied('copiado');
+        setTimeout(() => setCopied(''), 1500);
+      } catch {
+        setCopied('erro');
+        setTimeout(() => setCopied(''), 1500);
+      }
+    };
+
+    const closeModal = () => {
+      if (pollRef.current) clearInterval(pollRef.current);
+      onClose();
+    };
+
+    const supportHref = `mailto:?subject=Erro%20Pagamento%20Checkout&body=Transacao:%20${encodeURIComponent(tx?.id || '')}%0ARodada:%20${encodeURIComponent(context?.roundId || '')}`;
+
+    if (!open) return null;
+
+    return (
+      <div className="fixed inset-0 bg-black bg-opacity-60 flex items-center justify-center p-4 z-50" role="dialog" aria-modal="true" aria-label="Pagamento Checkout">
+        <div className="bg-white rounded-xl max-w-xl w-full overflow-hidden">
+          <div className="p-4 border-b flex items-center justify-between">
+            <div className="flex items-center gap-2">
+              <DollarSign className="text-green-600" size={22} />
+              <h3 className="text-lg font-bold">Pagamento</h3>
+            </div>
+            <button onClick={closeModal} className="p-2 rounded hover:bg-gray-100" aria-label="Fechar">
+              <X size={18} />
+            </button>
+          </div>
+
+          {stage === 'collect' && (
+            <div className="p-4 space-y-3">
+              <div className="bg-blue-50 border border-blue-200 rounded-lg p-3">
+                <p className="text-sm text-blue-800">Rodada: <span className="font-semibold">{context?.roundName}</span></p>
+                <p className="text-sm text-blue-800">Participações: <span className="font-semibold">{context?.cartelaCodes?.length || 0}</span></p>
+                <p className="text-sm text-blue-800">Valor total: <span className="font-bold">{fmtBRL(context?.amount || 0)}</span></p>
+              </div>
+              {error && (
+                <div className="bg-red-50 border border-red-200 text-red-700 px-3 py-2 rounded">{error}</div>
+              )}
+              <div>
+                <label className="block text-sm font-medium mb-1">Nome</label>
+                <input value={payer.name} onChange={(e)=>setPayer(p=>({ ...p, name: e.target.value }))} className="w-full px-3 py-2 border rounded-lg" />
+              </div>
+              <div>
+                <label className="block text-sm font-medium mb-1">Email</label>
+                <input type="email" value={payer.email} onChange={(e)=>setPayer(p=>({ ...p, email: e.target.value }))} className="w-full px-3 py-2 border rounded-lg" />
+              </div>
+              <div className="flex gap-3 pt-2">
+                <button onClick={handleCreate} className="flex-1 px-4 py-2 bg-green-600 text-white rounded-lg font-semibold hover:bg-green-700">Ir para Pagamento</button>
+                <button onClick={closeModal} className="px-4 py-2 border rounded-lg">Cancelar</button>
+              </div>
+            </div>
+          )}
+
+          {stage === 'creating' && (
+            <div className="p-6 text-center space-y-3">
+              <Loader2 className="mx-auto animate-spin text-green-600" size={28} />
+              <p className="text-sm text-gray-700">Gerando checkout...</p>
+            </div>
+          )}
+
+          {stage === 'showing' && tx && (
+            <div className="p-4 space-y-3">
+              <div className="flex flex-col items-center gap-3">
+                <p className="text-xl font-bold text-green-700">{fmtBRL(context?.amount || 0)}</p>
+                <div className="w-full text-center">
+                  <p className="text-sm text-gray-700">Abrimos o checkout em uma nova aba.</p>
+                  {tx?.init_point && (
+                    <a href={tx.init_point} target="_blank" rel="noopener noreferrer" className="mt-2 inline-flex items-center gap-2 px-3 py-2 bg-blue-600 text-white rounded hover:bg-blue-700">
+                      Ir para Checkout
+                    </a>
+                  )}
+                </div>
+                <div className="text-xs text-gray-600 space-y-1 mt-3">
+                  <p>Após pagar, voltaremos a verificar seu status automaticamente.</p>
+                </div>
+              </div>
+              <div className="flex justify-end gap-2 pt-2">
+                <button onClick={closeModal} className="px-4 py-2 border rounded">Fechar</button>
+              </div>
+            </div>
+          )}
+
+          {stage === 'approved' && (
+            <div className="p-6 text-center space-y-3">
+              <CheckCircle className="mx-auto text-green-600" size={36} />
+              <p className="text-lg font-semibold text-green-700">Pagamento aprovado!</p>
+              <p className="text-sm text-gray-700">Seus pontos serão computados automaticamente.</p>
+              <div className="pt-2">
+                <button onClick={closeModal} className="px-4 py-2 bg-green-600 text-white rounded hover:bg-green-700">Fechar</button>
+              </div>
+            </div>
+          )}
+
+          {stage === 'error' && (
+            <div className="p-6 space-y-3">
+              <div className="flex items-center gap-2 text-red-700">
+                <XCircle size={22} />
+                <p className="font-semibold">Falha ao processar pagamento</p>
+              </div>
+              {error && <div className="bg-red-50 border border-red-200 text-red-700 px-3 py-2 rounded">{error}</div>}
+              <div className="flex items-center gap-2">
+                <button onClick={() => { setStage('collect'); setError(''); }} className="px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700">Tentar Novamente</button>
+                <a href={supportHref} className="px-4 py-2 border rounded" target="_blank" rel="noopener noreferrer">Suporte</a>
+              </div>
+            </div>
+          )}
         </div>
       </div>
     );
@@ -5776,6 +6432,14 @@ const UserPanel = ({ setView }) => {
           round={cartelaDetails.round}
           cartela={cartelaDetails.cartela}
           onClose={() => setCartelaDetails(null)}
+        />
+      )}
+      {paymentModalOpen && paymentContext && (
+        <PaymentModal
+          open={paymentModalOpen}
+          onClose={() => { setPaymentModalOpen(false); setPaymentContext(null); }}
+          context={paymentContext}
+          currentUser={currentUser}
         />
       )}
     </div>
