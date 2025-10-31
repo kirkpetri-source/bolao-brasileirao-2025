@@ -28,7 +28,6 @@ export default async function handler(req, res) {
     // Sanitize and build URL
     let base = String(link || '').trim().replace(/\/$/, '').replace(/\.$/, '');
     let inst = String(instance || '').trim().replace(/\.$/, '');
-
     const allowHttp = process.env.EVOLUTION_ALLOW_HTTP_UPSTREAM === 'true';
     const isHttps = base.startsWith('https://');
     const isHttp = base.startsWith('http://');
