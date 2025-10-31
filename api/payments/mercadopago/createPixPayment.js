@@ -142,7 +142,9 @@ export default async function handler(req, res) {
       ? 'Token inválido do Mercado Pago. Verifique MP_ACCESS_TOKEN/MP_ADMIN_ACCESS_TOKEN ou reconecte via OAuth.'
       : (lowerDetail.includes('idempotency')
         ? 'Envie o cabeçalho X-Idempotency-Key único (corrigido no backend). Tente novamente.'
-        : 'Verifique as variáveis de ambiente e a conexão do admin ao Mercado Pago.');
+        : (lowerDetail.includes('collector') && lowerDetail.includes('qr render'))
+          ? 'A conta do Mercado Pago não possui Chave PIX/QR habilitado. Ative uma Chave PIX (EVP recomendada) na conta do administrador conectada e aguarde alguns minutos.'
+          : 'Verifique as variáveis de ambiente e a conexão do admin ao Mercado Pago.');
     res.status(code).json({ error: detail, hint });
   }
 }
