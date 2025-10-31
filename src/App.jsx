@@ -5621,6 +5621,7 @@ const UserPanel = ({ setView }) => {
     const [tx, setTx] = useState(null);
     const [copied, setCopied] = useState('');
     const [timeLeftMs, setTimeLeftMs] = useState(0);
+    const [approvedAt, setApprovedAt] = useState(null);
     const [payer, setPayer] = useState({
       name: currentUser?.name || '',
       email: currentUser?.email || '',
@@ -5656,6 +5657,8 @@ const UserPanel = ({ setView }) => {
     };
 
     const handleCreate = async () => {
+      // Evitar criação automática/duplicada; somente inicia a partir do estado de coleta
+      if (stage !== 'collect') return;
       try {
         setError(''); setStage('creating');
         try { if (typeof onStart === 'function') onStart(); } catch {}
@@ -5716,8 +5719,20 @@ const UserPanel = ({ setView }) => {
             const sres = await axios.get(`${apiBase}/api/payments/mercadopago/reconcile`, { params: { id: created.id } });
             const status = sres.data?.status;
             if (status === 'approved') {
+              setApprovedAt(new Date());
               setStage('approved');
               clearInterval(pollRef.current);
+              // Registrar evento no histórico do usuário
+              try {
+                await addDoc(collection(db, 'user_events'), {
+                  userId: currentUser?.id,
+                  type: 'payment_approved',
+                  transactionId: created.id,
+                  roundId: context?.roundId || null,
+                  amount: context?.amount || null,
+                  createdAt: serverTimestamp()
+                });
+              } catch {}
               try { if (typeof onApproved === 'function') onApproved({ id: created.id }); } catch {}
             } else if (status === 'rejected') {
               setError('Pagamento rejeitado. Tente novamente.');
@@ -5750,6 +5765,76 @@ const UserPanel = ({ setView }) => {
     const closeModal = () => {
       if (pollRef.current) clearInterval(pollRef.current);
       onClose();
+    };
+
+    const formatDateTimeBR = (date) => {
+      try {
+        return new Intl.DateTimeFormat('pt-BR', { dateStyle: 'short', timeStyle: 'short' }).format(date);
+      } catch {
+        return (date || new Date()).toLocaleString('pt-BR');
+      }
+    };
+
+    const normalizePhone = (s) => {
+      const d = String(s || '').replace(/\D/g, '');
+      return d.length > 11 ? d.slice(-11) : d; // DDD+numero
+    };
+
+    const handleCopyTxId = async () => {
+      if (!tx?.id) return;
+      try {
+        await navigator.clipboard.writeText(tx.id);
+        setCopied('copiado');
+        setTimeout(() => setCopied(''), 1500);
+      } catch {
+        setCopied('erro');
+        setTimeout(() => setCopied(''), 1500);
+      }
+    };
+
+    const sendReceiptWhatsApp = async () => {
+      const when = approvedAt || new Date();
+      const text = [
+        '✅ Pagamento confirmado!',
+        '',
+        `Rodada: ${context?.roundName || ''}`,
+        `Participações: ${context?.cartelaCodes?.length || 0}`,
+        `Valor pago: ${fmtBRL(context?.amount || 0)}`,
+        `Data/hora: ${formatDateTimeBR(when)}`,
+        `Transação: ${tx?.id || ''}`,
+        '',
+        'Obrigado pela participação! 🎉'
+      ].join('\n');
+
+      const number = normalizePhone(currentUser?.whatsapp || '');
+      const evo = settings?.devolution || {};
+      const apiBase = import.meta.env.VITE_API_BASE_URL || '';
+      try {
+        if (evo?.link && evo?.instanceName && evo?.token) {
+          await axios.post(`${apiBase}/api/evolution/sendText`, {
+            number: `55${number}`,
+            text,
+            link: evo.link,
+            instance: evo.instanceName,
+            token: evo.token
+          });
+          alert('✅ Comprovante enviado por WhatsApp.');
+        } else {
+          window.open(`https://wa.me/55${number}?text=${encodeURIComponent(text)}`, '_blank');
+        }
+        try {
+          await addDoc(collection(db, 'user_events'), {
+            userId: currentUser?.id,
+            type: 'payment_receipt_sent',
+            transactionId: tx?.id || null,
+            roundId: context?.roundId || null,
+            amount: context?.amount || null,
+            createdAt: serverTimestamp()
+          });
+        } catch {}
+      } catch (err) {
+        alert('Não foi possível enviar o comprovante no WhatsApp.');
+      }
     };
 
     const supportHref = `mailto:?subject=Erro%20Pagamento%20Checkout&body=Transacao:%20${encodeURIComponent(tx?.id || '')}%0ARodada:%20${encodeURIComponent(context?.roundId || '')}`;
@@ -5830,12 +5915,32 @@ const UserPanel = ({ setView }) => {
           )}
 
           {stage === 'approved' && (
-            <div className="p-6 text-center space-y-3">
-              <CheckCircle className="mx-auto text-green-600" size={36} />
-              <p className="text-lg font-semibold text-green-700">Pagamento aprovado!</p>
-              <p className="text-sm text-gray-700">Seus pontos serão computados automaticamente.</p>
-              <div className="pt-2">
-                <button onClick={closeModal} className="px-4 py-2 bg-green-600 text-white rounded hover:bg-green-700">Fechar</button>
+            <div className="p-6 space-y-4">
+              <div className="text-center">
+                <CheckCircle className="mx-auto text-green-600 animate-bounce" size={40} />
+                <p className="mt-2 text-lg font-bold text-green-700">Pagamento aprovado!</p>
+                <p className="text-sm text-gray-700">Tudo certo. Seu pagamento foi processado com sucesso.</p>
+              </div>
+              <div className="bg-green-50 border border-green-200 rounded-lg p-4 text-sm">
+                <div className="flex items-center justify-between">
+                  <span className="text-green-700 font-medium">Valor pago</span>
+                  <span className="text-green-800 font-bold">{fmtBRL(context?.amount || 0)}</span>
+                </div>
+                <div className="flex items-center justify-between mt-2">
+                  <span className="text-green-700 font-medium">Data/hora</span>
+                  <span className="text-green-800">{formatDateTimeBR(approvedAt || new Date())}</span>
+                </div>
+                <div className="mt-3">
+                  <label className="block text-green-700 font-medium mb-1">Código da transação</label>
+                  <div className="flex items-center gap-2">
+                    <input readOnly value={tx?.id || ''} className="flex-1 px-3 py-2 border rounded-lg text-xs" />
+                    <button onClick={handleCopyTxId} className="px-3 py-2 bg-gray-800 text-white rounded">Copiar</button>
+                  </div>
+                </div>
+              </div>
+              <div className="flex flex-col sm:flex-row gap-2 sm:justify-end">
+                <button onClick={sendReceiptWhatsApp} className="w-full sm:w-auto px-4 py-2 bg-green-600 text-white rounded hover:bg-green-700">Enviar comprovante via WhatsApp</button>
+                <button onClick={closeModal} className="w-full sm:w-auto px-4 py-2 border rounded">Voltar</button>
               </div>
             </div>
           )}
