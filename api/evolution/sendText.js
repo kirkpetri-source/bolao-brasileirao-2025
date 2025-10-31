@@ -57,10 +57,10 @@ export default async function handler(req, res) {
           url,
           { number, text },
           {
-        headers: { 'Content-Type': 'application/json', apikey: token },
-        httpsAgent: agent,
-        timeout: 15000,
-      }
+            headers: { 'Content-Type': 'application/json', apikey: token },
+            httpsAgent: agent,
+            timeout: 15000,
+          }
         );
         return res.status(200).json(response.data || { ok: true, attempt });
       } catch (err) {
