@@ -5963,16 +5963,8 @@ const UserPanel = ({ setView }) => {
                   <span className="text-green-700 font-medium">Data/hora</span>
                   <span className="text-green-800">{formatDateTimeBR(approvedAt || new Date())}</span>
                 </div>
-                <div className="mt-3">
-                  <label className="block text-green-700 font-medium mb-1">Código da transação</label>
-                  <div className="flex items-center gap-2">
-                    <input readOnly value={tx?.id || ''} className="flex-1 px-3 py-2 border rounded-lg text-xs" />
-                    <button onClick={handleCopyTxId} className="px-3 py-2 bg-gray-800 text-white rounded">Copiar</button>
-                  </div>
-                </div>
               </div>
               <div className="flex flex-col sm:flex-row gap-2 sm:justify-end">
-                <button onClick={sendReceiptWhatsApp} className="w-full sm:w-auto px-4 py-2 bg-green-600 text-white rounded hover:bg-green-700">Enviar comprovante via WhatsApp</button>
                 <button onClick={closeModal} className="w-full sm:w-auto px-4 py-2 border rounded">Voltar</button>
               </div>
             </div>
