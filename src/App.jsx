@@ -1275,17 +1275,16 @@ const AdminPanel = ({ setView }) => {
     try {
       if (!currentUser?.id) { alert('Administrador não identificado.'); return; }
       const apiBase = import.meta.env.VITE_API_BASE_URL || '';
-      const r = await fetch(`${apiBase}/api/oauth/mp/start`, {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ adminId: currentUser.id })
-      });
+      const url = `${apiBase}/api/oauth/mp/start?adminId=${encodeURIComponent(currentUser.id)}`;
+      const r = await fetch(url, { method: 'GET' });
       if (!r.ok) {
         // Ambiente local (vite) não serve /api -> orientar uso do vercel dev
         throw new Error('Endpoint /api indisponível no dev local. Use "npx vercel dev" ou teste no deploy.');
       }
       const j = await r.json();
-      if (j?.url) {
-        window.open(j.url, 'mp-oauth', 'width=800,height=700');
+      const authUrl = j?.authorization_url || j?.url;
+      if (authUrl) {
+        window.open(authUrl, 'mp-oauth', 'width=800,height=700');
       } else {
         alert('Não foi possível iniciar a conexão com o Mercado Pago.');
       }
