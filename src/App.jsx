@@ -5611,7 +5611,7 @@ const UserPanel = ({ setView }) => {
   };
 
   const PaymentModal = ({ open, onClose, context, currentUser }) => {
-    const { users } = useApp();
+    const { users, settings } = useApp();
     const [stage, setStage] = useState('collect'); // collect | creating | showing | approved | error
     const [error, setError] = useState('');
     const [tx, setTx] = useState(null);
@@ -5656,9 +5656,10 @@ const UserPanel = ({ setView }) => {
         setError(''); setStage('creating');
         // Determinar administrador conectado (prioriza admin logado; senão busca em 'admins')
         let adminId = null;
-        if (currentUser?.isAdmin && mpConn?.connected) {
+        if (currentUser?.isAdmin) {
           adminId = currentUser.id;
-        } else {
+        }
+        if (!adminId) {
           try {
             const q = query(collection(db, 'admins'), where('mercado_pago_connected', '==', true));
             const snap = await getDocs(q);
@@ -5671,26 +5672,43 @@ const UserPanel = ({ setView }) => {
           return;
         }
         const apiBase = import.meta.env.VITE_API_BASE_URL || '';
-        const res = await axios.post(`${apiBase}/api/payments/mercadopago/createPreference`, {
-          adminId,
-          userId: currentUser?.id,
-          roundId: context?.roundId,
-          amount: context?.amount,
-          cartelaCodes: context?.cartelaCodes || [],
-          payer: { name: payer?.name, email: payer?.email }
-        });
-        const data = res.data;
-        setTx({ ...data });
-        // Open checkout in a new tab
-        if (data?.init_point) {
-          try { window.open(data.init_point, '_blank', 'noopener'); } catch {}
+        // Preferir PIX para checkout simples sem cadastro
+        const wantsPix = settings?.payment?.methods?.pix !== false; // default true
+        let created = null;
+        if (wantsPix) {
+          const res = await axios.post(`${apiBase}/api/payments/mercadopago/createPixPayment`, {
+            adminId,
+            userId: currentUser?.id,
+            roundId: context?.roundId,
+            amount: context?.amount,
+            cartelaCodes: context?.cartelaCodes || [],
+            payer: { name: payer?.name }
+          });
+          created = res.data;
+          setTx({ ...created });
+          setStage('showing');
+        } else {
+          const res = await axios.post(`${apiBase}/api/payments/mercadopago/createPreference`, {
+            adminId,
+            userId: currentUser?.id,
+            roundId: context?.roundId,
+            amount: context?.amount,
+            cartelaCodes: context?.cartelaCodes || [],
+            payer: { name: payer?.name, email: payer?.email }
+          });
+          created = res.data;
+          setTx({ ...created });
+          // Open checkout em nova aba (cartão)
+          if (created?.init_point) {
+            try { window.open(created.init_point, '_blank', 'noopener'); } catch {}
+          }
+          setStage('showing');
         }
-        setStage('showing');
         // start polling every 30s
         if (pollRef.current) clearInterval(pollRef.current);
         pollRef.current = setInterval(async () => {
           try {
-            const sres = await axios.get(`${apiBase}/api/payments/status`, { params: { id: data.id } });
+            const sres = await axios.get(`${apiBase}/api/payments/status`, { params: { id: created.id } });
             const status = sres.data?.status;
             if (status === 'approved') {
               setStage('approved');
@@ -5753,16 +5771,12 @@ const UserPanel = ({ setView }) => {
               {error && (
                 <div className="bg-red-50 border border-red-200 text-red-700 px-3 py-2 rounded">{error}</div>
               )}
-              <div>
-                <label className="block text-sm font-medium mb-1">Nome</label>
-                <input value={payer.name} onChange={(e)=>setPayer(p=>({ ...p, name: e.target.value }))} className="w-full px-3 py-2 border rounded-lg" />
-              </div>
-              <div>
-                <label className="block text-sm font-medium mb-1">Email</label>
-                <input type="email" value={payer.email} onChange={(e)=>setPayer(p=>({ ...p, email: e.target.value }))} className="w-full px-3 py-2 border rounded-lg" />
+              {/* PIX simples: sem necessidade de e-mail/conta */}
+              <div className="text-sm text-gray-700">
+                Pagamento via PIX com QR Code. Sem cadastro.
               </div>
               <div className="flex gap-3 pt-2">
-                <button onClick={handleCreate} className="flex-1 px-4 py-2 bg-green-600 text-white rounded-lg font-semibold hover:bg-green-700">Ir para Pagamento</button>
+                <button onClick={handleCreate} className="flex-1 px-4 py-2 bg-green-600 text-white rounded-lg font-semibold hover:bg-green-700">Gerar QR Code PIX</button>
                 <button onClick={closeModal} className="px-4 py-2 border rounded-lg">Cancelar</button>
               </div>
             </div>
@@ -5779,17 +5793,27 @@ const UserPanel = ({ setView }) => {
             <div className="p-4 space-y-3">
               <div className="flex flex-col items-center gap-3">
                 <p className="text-xl font-bold text-green-700">{fmtBRL(context?.amount || 0)}</p>
-                <div className="w-full text-center">
-                  <p className="text-sm text-gray-700">Abrimos o checkout em uma nova aba.</p>
-                  {tx?.init_point && (
-                    <a href={tx.init_point} target="_blank" rel="noopener noreferrer" className="mt-2 inline-flex items-center gap-2 px-3 py-2 bg-blue-600 text-white rounded hover:bg-blue-700">
-                      Ir para Checkout
-                    </a>
-                  )}
-                </div>
-                <div className="text-xs text-gray-600 space-y-1 mt-3">
-                  <p>Após pagar, voltaremos a verificar seu status automaticamente.</p>
-                </div>
+                {/* Exibir QR do PIX quando disponível */}
+                {tx?.qrCodeBase64 ? (
+                  <img src={`data:image/png;base64,${tx.qrCodeBase64}`} alt="QR Code PIX" className="w-56 h-56 border rounded-lg" />
+                ) : (
+                  <div className="text-sm text-gray-600">Gerando QR Code...</div>
+                )}
+                {/* Código copia e cola */}
+                {(tx?.pixCopiaECola || tx?.qrCode) && (
+                  <div className="w-full">
+                    <label className="block text-sm font-medium mb-1">Código PIX (copia e cola)</label>
+                    <div className="flex items-center gap-2">
+                      <input readOnly value={tx?.pixCopiaECola || tx?.qrCode || ''} className="flex-1 px-3 py-2 border rounded-lg text-xs" />
+                      <button onClick={handleCopy} className="px-3 py-2 bg-gray-800 text-white rounded">Copiar</button>
+                    </div>
+                  </div>
+                )}
+                {/* Expiração */}
+                {tx?.expiration && (
+                  <p className="text-xs text-gray-600">Expira em {formatLeft()}</p>
+                )}
+                <div className="text-xs text-gray-600">Após pagar, verificaremos seu status automaticamente.</div>
               </div>
               <div className="flex justify-end gap-2 pt-2">
                 <button onClick={closeModal} className="px-4 py-2 border rounded">Fechar</button>
