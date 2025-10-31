@@ -5654,12 +5654,20 @@ const UserPanel = ({ setView }) => {
     const handleCreate = async () => {
       try {
         setError(''); setStage('creating');
-        // Determine admin responsible (first admin user)
-        const adminUser = users.find(u => u.isAdmin);
-        const adminId = adminUser?.id;
+        // Determinar administrador conectado (prioriza admin logado; senão busca em 'admins')
+        let adminId = null;
+        if (currentUser?.isAdmin && mpConn?.connected) {
+          adminId = currentUser.id;
+        } else {
+          try {
+            const q = query(collection(db, 'admins'), where('mercado_pago_connected', '==', true));
+            const snap = await getDocs(q);
+            if (!snap.empty) adminId = snap.docs[0].id;
+          } catch {}
+        }
         if (!adminId) {
           setStage('error');
-          setError('Administrador não encontrado para criar o pagamento.');
+          setError('Administrador não conectado ao Mercado Pago. Conecte em Configurações > Pagamentos.');
           return;
         }
         const apiBase = import.meta.env.VITE_API_BASE_URL || '';
