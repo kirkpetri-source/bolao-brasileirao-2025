@@ -102,6 +102,7 @@ export default async function handler(req, res) {
     // Create PIX payment — alguns ambientes exigem payer não nulo
     const payerEmail = (payer?.email || process.env.MP_PAYER_EMAIL_FALLBACK || process.env.DEFAULT_PAYER_EMAIL || 'pix@bolao-brasileirao-2025.app');
     const payerName = (payer?.name || 'Participante');
+    const idempotencyKey = txDoc.id; // usar o ID da transação como chave idempotente
     const payload = {
       transaction_amount: Number(amount),
       description,
@@ -113,7 +114,7 @@ export default async function handler(req, res) {
         first_name: payerName,
       }
     };
-    const headers = { Authorization: `Bearer ${accessToken}` };
+    const headers = { Authorization: `Bearer ${accessToken}`, 'X-Idempotency-Key': idempotencyKey };
 
     const mp = await axios.post('https://api.mercadopago.com/v1/payments', payload, { headers, timeout: 10000 });
     const payment = mp.data;
@@ -126,6 +127,7 @@ export default async function handler(req, res) {
       qrCodeBase64: payment?.point_of_interaction?.transaction_data?.qr_code_base64 || null,
       ticketUrl: payment?.point_of_interaction?.transaction_data?.ticket_url || null,
       expiration: payment?.date_of_expiration || null,
+      idempotencyKey,
       updatedAt: serverTimestamp(),
     };
 
@@ -135,9 +137,12 @@ export default async function handler(req, res) {
   } catch (err) {
     const code = err?.response?.status || 500;
     const detail = err?.response?.data?.message || err?.response?.data?.error || err?.message || String(err);
+    const lowerDetail = String(detail).toLowerCase();
     const hint = code === 401
       ? 'Token inválido do Mercado Pago. Verifique MP_ACCESS_TOKEN/MP_ADMIN_ACCESS_TOKEN ou reconecte via OAuth.'
-      : 'Verifique as variáveis de ambiente e a conexão do admin ao Mercado Pago.';
+      : (lowerDetail.includes('idempotency')
+        ? 'Envie o cabeçalho X-Idempotency-Key único (corrigido no backend). Tente novamente.'
+        : 'Verifique as variáveis de ambiente e a conexão do admin ao Mercado Pago.');
     res.status(code).json({ error: detail, hint });
   }
 }
