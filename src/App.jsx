@@ -5632,6 +5632,10 @@ const UserPanel = ({ setView }) => {
 
     useEffect(() => {
       if (!open) return;
+      // Se já estiver aprovado, não reconfigura o estado ao reabrir
+      if (stage === 'approved') return;
+      // Esta verificação só deve ocorrer na abertura inicial (estado 'collect')
+      if (stage !== 'collect') return;
       setError(''); setTx(null); setCopied('');
       // Se já estiver pago no banco, mostrar diretamente a confirmação
       try {
@@ -5648,7 +5652,7 @@ const UserPanel = ({ setView }) => {
       } catch {
         setStage('collect');
       }
-    }, [open]);
+    }, [open, stage]);
 
     // Monitora atualizações de pagamento no banco e muda para 'approved'
     useEffect(() => {
