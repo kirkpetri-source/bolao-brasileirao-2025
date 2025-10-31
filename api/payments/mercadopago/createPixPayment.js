@@ -133,6 +133,10 @@ export default async function handler(req, res) {
     res.status(200).json({ id: txDoc.id, ...txData });
   } catch (err) {
     const code = err?.response?.status || 500;
-    res.status(code).json({ error: 'Failed to create PIX payment', message: err?.message || String(err) });
+    const detail = err?.response?.data?.message || err?.response?.data?.error || err?.message || String(err);
+    const hint = code === 401
+      ? 'Token inválido do Mercado Pago. Verifique MP_ACCESS_TOKEN/MP_ADMIN_ACCESS_TOKEN ou reconecte via OAuth.'
+      : 'Verifique as variáveis de ambiente e a conexão do admin ao Mercado Pago.';
+    res.status(code).json({ error: detail, hint });
   }
 }
