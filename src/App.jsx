@@ -1598,7 +1598,6 @@ const AdminPanel = ({ setView }) => {
   const [isSendingCharges, setIsSendingCharges] = useState(false);
   const [commsMessage, setCommsMessage] = useState('');
   const [commSelectedTemplateKey, setCommSelectedTemplateKey] = useState('');
- 
   const [selectedCommUserId, setSelectedCommUserId] = useState('');
   const [selectedCommRound, setSelectedCommRound] = useState(null);
   const [commPaymentFilter, setCommPaymentFilter] = useState('all');
@@ -1656,10 +1655,7 @@ const AdminPanel = ({ setView }) => {
     // Sanitização: remover espaços, barras/ pontos finais, e forçar HTTPS (para chamada direta)
     let cleanBase = (base || '').trim().replace(/\/$/, '').replace(/\.$/, '');
     let cleanInstance = (instance || '').trim().replace(/\.$/, '');
- 
- 
-    if (cleanBase.startsWith('http://')) cleanBase = 'https://' + cleanBase.slice(7);
- 
+
 
     const directUrl = `${cleanBase}/message/sendText/${encodeURIComponent(cleanInstance)}`;
 
@@ -4072,7 +4068,7 @@ const AdminPanel = ({ setView }) => {
                       <p id="err-comm-msg" className="text-xs text-red-600 mt-1">Informe uma mensagem.</p>
                     )}
                     <p className="text-xs text-gray-500 mt-2">Variáveis: {'{NOME}'} • Dica: personalize com contexto curto.</p>
- 
+
                     {(() => {
                       const context = getTemplateContext();
                       const { unknownTags, missingTags } = validateMessageTags(commsMessage || '', context);
@@ -4095,7 +4091,7 @@ const AdminPanel = ({ setView }) => {
                         </div>
                       );
                     })()}
- 
+
                   </div>
 
                   {/* Personalização rápida para modelos */}
