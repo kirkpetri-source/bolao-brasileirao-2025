@@ -124,12 +124,19 @@ export default async function handler(req, res) {
       return;
     }
 
-    // Determine admin access token
+    // Determine admin access token with fallback to env
     let adminAccessToken = null;
     if (adminId) {
       const aSnap = await getDoc(doc(db, 'admins', adminId));
       const aData = aSnap.exists() ? aSnap.data() : null;
       adminAccessToken = aData?.mercado_pago_access_token ? decrypt(aData.mercado_pago_access_token) : null;
+    }
+    if (!adminAccessToken) {
+      const envToken = (process.env.MP_ACCESS_TOKEN || process.env.MP_ADMIN_ACCESS_TOKEN || '').toString().trim();
+      adminAccessToken = envToken || null;
+    }
+    if (!adminAccessToken) {
+      throw new Error('Mercado Pago admin access token missing for webhook fetch');
     }
     // Always fetch payment to trust source of truth (using admin token)
     const payment = await fetchPayment(paymentId, adminAccessToken);
