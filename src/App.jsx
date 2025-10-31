@@ -715,7 +715,7 @@ const LoginScreen = ({ setView }) => {
           </div>
           {showRulesModal && (
             <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
-              <div className="bg-white rounded-xl max-w-3xl w-full">
+              <div className="bg-white rounded-xl max-w-3xl w-full max-h-[90vh] overflow-y-auto">
                 <div className="p-6 border-b flex justify-between items-center">
                   <div className="flex items-center gap-3">
                     <FileText className="text-green-600" size={24} />
@@ -5519,8 +5519,8 @@ const UserPanel = ({ setView }) => {
   const CartelaDetailsModal = ({ round, cartela, onClose }) => {
     const { teams, establishments } = useApp();
     return (
-      <div className="fixed inset-0 z-50 bg-black/50 flex items-center justify-center" onClick={onClose}>
-        <div className="bg-white w-[95%] max-w-3xl rounded-xl shadow-xl" onClick={(e) => e.stopPropagation()}>
+      <div className="fixed inset-0 z-50 bg-black/50 flex items-center justify-center p-4" onClick={onClose}>
+        <div className="bg-white w-[95%] max-w-3xl rounded-xl shadow-xl max-h-[90vh] overflow-y-auto" onClick={(e) => e.stopPropagation()}>
           <div className="flex items-center justify-between p-4 border-b">
             <div>
               <h3 className="text-lg font-bold">Palpites do Participante</h3>
@@ -5876,8 +5876,8 @@ const UserPanel = ({ setView }) => {
 
     return (
       <div className="fixed inset-0 bg-black bg-opacity-60 flex items-center justify-center p-4 z-50" role="dialog" aria-modal="true" aria-label="Pagamento Checkout">
-        <div className="bg-white rounded-xl max-w-xl w-full overflow-hidden">
-          <div className="p-4 border-b flex items-center justify-between">
+        <div className="bg-white rounded-xl w-[95%] sm:w-full max-w-xl max-h-[90vh] overflow-y-auto">
+          <div className="p-4 border-b flex items-center justify-between sticky top-0 bg-white z-10">
             <div className="flex items-center gap-2">
               <DollarSign className="text-green-600" size={22} />
               <h3 className="text-lg font-bold">Pagamento</h3>
@@ -5921,7 +5921,7 @@ const UserPanel = ({ setView }) => {
                 <p className="text-xl font-bold text-green-700">{fmtBRL(context?.amount || 0)}</p>
                 {/* Exibir QR do PIX quando disponível */}
                 {tx?.qrCodeBase64 ? (
-                  <img src={`data:image/png;base64,${tx.qrCodeBase64}`} alt="QR Code PIX" className="w-56 h-56 border rounded-lg" />
+                  <img src={`data:image/png;base64,${tx.qrCodeBase64}`} alt="QR Code PIX" className="w-48 h-48 sm:w-56 sm:h-56 border rounded-lg" />
                 ) : (
                   <div className="text-sm text-gray-600">Gerando QR Code...</div>
                 )}
@@ -5929,9 +5929,9 @@ const UserPanel = ({ setView }) => {
                 {(tx?.pixCopiaECola || tx?.qrCode) && (
                   <div className="w-full">
                     <label className="block text-sm font-medium mb-1">Código PIX (copia e cola)</label>
-                    <div className="flex items-center gap-2">
-                      <input readOnly value={tx?.pixCopiaECola || tx?.qrCode || ''} className="flex-1 px-3 py-2 border rounded-lg text-xs" />
-                      <button onClick={handleCopy} className="px-3 py-2 bg-gray-800 text-white rounded">Copiar</button>
+                    <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2">
+                      <input readOnly value={tx?.pixCopiaECola || tx?.qrCode || ''} className="w-full sm:flex-1 px-3 py-2 border rounded-lg text-xs" />
+                      <button onClick={handleCopy} className="w-full sm:w-auto px-3 py-2 bg-gray-800 text-white rounded">Copiar</button>
                     </div>
                   </div>
                 )}
@@ -6216,7 +6216,7 @@ const UserPanel = ({ setView }) => {
 
       {showRulesModal && (
         <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
-          <div className="bg-white rounded-xl max-w-3xl w-full">
+          <div className="bg-white rounded-xl max-w-3xl w-full max-h-[90vh] overflow-y-auto">
             <div className="p-6 border-b flex justify-between items-center">
               <div className="flex items-center gap-3">
                 <FileText className="text-green-600" size={24} />
@@ -6253,10 +6253,10 @@ const UserPanel = ({ setView }) => {
                           <h3 className="text-xl font-bold">{round.name}</h3>
                           <p className="text-gray-600 mt-1">{round.matches?.length || 0} jogos • R$ {settings?.betValue?.toFixed(2) || '15,00'} por participação</p>
                         </div>
-                        <div className="flex gap-2 items-center">
+                        <div className="flex flex-col sm:flex-row gap-2 items-stretch sm:items-center">
                           <button 
                             onClick={() => handleStartPrediction(round)} 
-                            className="flex items-center gap-2 bg-green-600 text-white px-4 sm:px-6 py-3 rounded-lg font-medium hover:bg-green-700"
+                            className="w-full sm:w-auto justify-center flex items-center gap-2 bg-green-600 text-white px-4 sm:px-6 py-3 rounded-lg font-medium hover:bg-green-700"
                           >
                             <Plus size={20} />
                             Nova Participação
@@ -6270,7 +6270,7 @@ const UserPanel = ({ setView }) => {
                               <button
                                 onClick={() => openPaymentForRound(round, pendingCodes, totalAmount)}
                                 disabled={disabled}
-                                className={`flex items-center gap-2 px-4 sm:px-6 py-3 rounded-lg font-semibold focus:outline-none focus:ring-2 ${disabled ? 'bg-gray-300 text-gray-600 cursor-not-allowed' : 'bg-blue-600 text-white hover:bg-blue-700 focus:ring-blue-400'}`}
+                                className={`w-full sm:w-auto justify-center flex items-center gap-2 px-4 sm:px-6 py-3 rounded-lg font-semibold focus:outline-none focus:ring-2 ${disabled ? 'bg-gray-300 text-gray-600 cursor-not-allowed' : 'bg-blue-600 text-white hover:bg-blue-700 focus:ring-blue-400'}`}
                                 aria-label={`Efetuar pagamento da rodada ${round.name} no valor de ${fmtBRL(totalAmount)}`}
                               >
                                 <DollarSign size={20} />
