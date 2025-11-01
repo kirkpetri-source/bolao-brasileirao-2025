@@ -1780,6 +1780,8 @@ const AdminPanel = ({ setView }) => {
   const [commPaymentFilter, setCommPaymentFilter] = useState('all');
   const [isSendingMassComms, setIsSendingMassComms] = useState(false);
   const [selectAllCommUsers, setSelectAllCommUsers] = useState(false);
+  const [commSelectedUserIds, setCommSelectedUserIds] = useState([]);
+  const selectAllCommRef = useRef(null);
   const [isSendingSingleComm, setIsSendingSingleComm] = useState(false);
   const [commFeedback, setCommFeedback] = useState(null); // { type: 'success'|'error', text }
   const [commDeadline, setCommDeadline] = useState('');
@@ -1801,6 +1803,14 @@ const AdminPanel = ({ setView }) => {
       setCommPdfUrl(rankingUrl);
     } catch {}
   }, [selectedCommRound, rounds, commAppLink]);
+
+  // Atualiza estado visual (indeterminate) do checkbox "Selecionar todos"
+  useEffect(() => {
+    if (!selectAllCommRef.current) return;
+    const eligible = (users || []).filter(u => !u.isAdmin && !!u.whatsapp);
+    const isMixed = selectAllCommUsers && commSelectedUserIds.length > 0 && commSelectedUserIds.length < eligible.length;
+    selectAllCommRef.current.indeterminate = isMixed;
+  }, [selectAllCommUsers, commSelectedUserIds, users]);
 
   const formatPhoneBR = (phone) => {
     let formatted = (phone || '').replace(/\D/g, '');
@@ -1967,11 +1977,49 @@ const AdminPanel = ({ setView }) => {
     }
   };
 
-  const getCommRecipients = () => {
-    // Quando selecionar todos os usuários, ignora rodada/participação
+  const getEligibleCommUsers = () => {
     if (selectAllCommUsers) {
-      return (users || [])
-        .filter(u => !u.isAdmin && !!u.whatsapp)
+      return (users || []).filter(u => !u.isAdmin && !!u.whatsapp);
+    }
+    if (!selectedCommRound) return [];
+    const list = getRoundParticipants(selectedCommRound) || [];
+    return list
+      .filter(p => {
+        const u = users.find(x => x.id === p.userId);
+        if (!u?.whatsapp) return false;
+        if (commPaymentFilter === 'paid') return !!p.paid;
+        if (commPaymentFilter === 'pending') return !p.paid;
+        return true;
+      })
+      .map(p => users.find(x => x.id === p.userId))
+      .filter(Boolean);
+  };
+
+  const handleToggleSelectAllComm = (checked) => {
+    setSelectAllCommUsers(checked);
+    if (checked) {
+      const eligible = (users || []).filter(u => !u.isAdmin && !!u.whatsapp);
+      setCommSelectedUserIds(eligible.map(u => u.id));
+      setSelectedCommUserId('');
+    } else {
+      setCommSelectedUserIds([]);
+    }
+  };
+
+  const toggleCommUser = (userId, checked) => {
+    setCommSelectedUserIds(prev => {
+      const set = new Set(prev);
+      if (checked) set.add(userId); else set.delete(userId);
+      return Array.from(set);
+    });
+  };
+
+  const getCommRecipients = () => {
+    if (selectAllCommUsers) {
+      const eligible = (users || []).filter(u => !u.isAdmin && !!u.whatsapp);
+      const sel = new Set(commSelectedUserIds);
+      return eligible
+        .filter(u => sel.has(u.id))
         .map(u => ({ userId: u.id, paid: false }));
     }
     if (!selectedCommRound) return [];
@@ -1989,7 +2037,7 @@ const AdminPanel = ({ setView }) => {
     try {
       const recipients = getCommRecipients();
       if (!commsMessage) throw new Error('Digite a mensagem a enviar.');
-      if (recipients.length === 0) throw new Error('Nenhum destinatário atende aos filtros.');
+      if (recipients.length === 0) throw new Error('Nenhum destinatário selecionado.');
       setIsSendingMassComms(true);
       let okCount = 0;
       let failCount = 0;
@@ -4480,7 +4528,15 @@ const AdminPanel = ({ setView }) => {
                       <div className="flex items-center justify-between">
                         <label className="block text-sm font-medium mb-2">Destinatário</label>
                         <label className="flex items-center gap-2 text-xs">
-                          <input type="checkbox" className="w-4 h-4" checked={selectAllCommUsers} onChange={(e)=>setSelectAllCommUsers(e.target.checked)} aria-label="Selecionar todos os usuários" />
+                          <input
+                            ref={selectAllCommRef}
+                            type="checkbox"
+                            className="w-4 h-4"
+                            checked={selectAllCommUsers}
+                            onChange={(e)=>handleToggleSelectAllComm(e.target.checked)}
+                            aria-label="Selecionar todos os usuários"
+                            aria-checked={selectAllCommUsers && commSelectedUserIds.length > 0 && commSelectedUserIds.length < (users.filter(u => !u.isAdmin && !!u.whatsapp).length) ? 'mixed' : selectAllCommUsers}
+                          />
                           Selecionar todos os usuários
                         </label>
                       </div>
@@ -4500,9 +4556,39 @@ const AdminPanel = ({ setView }) => {
                       {!selectAllCommUsers && !selectedCommUserId && (
                         <p id="err-comm-user" className="text-xs text-red-600 mt-1">Selecione um participante ou marque "Selecionar todos".</p>
                       )}
-                      {selectAllCommUsers && (
-                        <p className="text-xs text-gray-600 mt-1">Total elegíveis pelos filtros: {getCommRecipients().length}</p>
-                      )}
+                      {selectAllCommUsers && (() => {
+                        const eligible = users.filter(u => !u.isAdmin && !!u.whatsapp);
+                        return (
+                          <div className="mt-2">
+                            <p className="text-xs text-gray-600" aria-live="polite">Selecionados: {commSelectedUserIds.length} de {eligible.length}</p>
+                            <div className="mt-2 grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-2">
+                              {eligible.map(u => {
+                                const checked = commSelectedUserIds.includes(u.id);
+                                return (
+                                  <label
+                                    key={u.id}
+                                    htmlFor={`comm-user-${u.id}`}
+                                    className={`flex items-center gap-2 p-2 border rounded-lg cursor-pointer transition-colors ${checked ? 'bg-green-50 border-green-400 ring-1 ring-green-300' : 'hover:bg-gray-50'}`}
+                                  >
+                                    <input
+                                      id={`comm-user-${u.id}`}
+                                      type="checkbox"
+                                      className="w-4 h-4"
+                                      checked={checked}
+                                      onChange={(e) => toggleCommUser(u.id, e.target.checked)}
+                                      aria-label={`Selecionar ${u.name}`}
+                                    />
+                                    <span className="text-sm">{u.name} {u.whatsapp ? `• ${u.whatsapp}` : '• sem WhatsApp'}</span>
+                                  </label>
+                                );
+                              })}
+                            </div>
+                            {commSelectedUserIds.length === 0 && (
+                              <p className="text-xs text-red-600 mt-1">Selecione ao menos um participante.</p>
+                            )}
+                          </div>
+                        );
+                      })()}
                     </div>
                     </div>
                   </fieldset>
