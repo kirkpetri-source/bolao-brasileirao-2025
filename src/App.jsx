@@ -1780,11 +1780,14 @@ const AdminPanel = ({ setView }) => {
   const [commPaymentFilter, setCommPaymentFilter] = useState('all');
   const [isSendingMassComms, setIsSendingMassComms] = useState(false);
   const [selectAllCommUsers, setSelectAllCommUsers] = useState(false);
+  const [isSendingSingleComm, setIsSendingSingleComm] = useState(false);
+  const [commFeedback, setCommFeedback] = useState(null); // { type: 'success'|'error', text }
   const [commDeadline, setCommDeadline] = useState('');
   const [commResultsDate, setCommResultsDate] = useState('');
   const [commPdfUrl, setCommPdfUrl] = useState('');
   const [commAppLink, setCommAppLink] = useState(typeof window !== 'undefined' ? window.location.origin : '');
   const [commActiveTab, setCommActiveTab] = useState('envio');
+  const [commsDelayMs, setCommsDelayMs] = useState(1200);
 
   // Automatiza prazo final (closeAt), divulgação (createdAt) e link de ranking
   useEffect(() => {
@@ -1921,6 +1924,7 @@ const AdminPanel = ({ setView }) => {
 
   const sendGeneralCommunication = async () => {
     try {
+      setIsSendingSingleComm(true);
       const user = users.find(u => u.id === selectedCommUserId);
       if (!user) throw new Error('Selecione um destinatário');
       if (!user.whatsapp) throw new Error('Destinatário sem WhatsApp');
@@ -1938,10 +1942,12 @@ const AdminPanel = ({ setView }) => {
           createdBy: currentUser?.id || null
         });
       }
-      alert(`Mensagem enviada para ${user.name}.`);
+      setCommFeedback({ type: 'success', text: `Mensagem enviada para ${user.name}.` });
+      setTimeout(() => setCommFeedback(null), 2000);
     } catch (err) {
       console.error('Erro ao enviar comunicado:', err);
-      alert('Erro ao enviar comunicado: ' + err.message);
+      setCommFeedback({ type: 'error', text: 'Erro ao enviar comunicado: ' + err.message });
+      setTimeout(() => setCommFeedback(null), 3000);
       if (addCommunication && selectedCommUserId) {
         try {
           await addCommunication({
@@ -1954,10 +1960,18 @@ const AdminPanel = ({ setView }) => {
           });
         } catch {}
       }
+    } finally {
+      setIsSendingSingleComm(false);
     }
   };
 
   const getCommRecipients = () => {
+    // Quando selecionar todos os usuários, ignora rodada/participação
+    if (selectAllCommUsers) {
+      return (users || [])
+        .filter(u => !u.isAdmin && !!u.whatsapp)
+        .map(u => ({ userId: u.id, paid: false }));
+    }
     if (!selectedCommRound) return [];
     const list = getRoundParticipants(selectedCommRound) || [];
     return list.filter(p => {
@@ -1972,7 +1986,6 @@ const AdminPanel = ({ setView }) => {
   const sendMassCommunications = async () => {
     try {
       const recipients = getCommRecipients();
-      if (!selectedCommRound) throw new Error('Selecione a rodada para filtrar os participantes.');
       if (!commsMessage) throw new Error('Digite a mensagem a enviar.');
       if (recipients.length === 0) throw new Error('Nenhum destinatário atende aos filtros.');
       setIsSendingMassComms(true);
@@ -1986,15 +1999,15 @@ const AdminPanel = ({ setView }) => {
           await sendTextViaEvolution(phone, msg);
           okCount++;
           if (addCommunication) {
-            await addCommunication({ type: 'communication', userId: user.id, roundId: selectedCommRound, message: msg, channel: 'whatsapp', status: 'sent', createdBy: currentUser?.id || null });
+            await addCommunication({ type: 'communication', userId: user.id, roundId: selectAllCommUsers ? null : selectedCommRound, message: msg, channel: 'whatsapp', status: 'sent', createdBy: currentUser?.id || null });
           }
         } catch (e) {
           failCount++;
           if (addCommunication) {
-            try { await addCommunication({ type: 'communication', userId: user.id, roundId: selectedCommRound, message: 'Falha: ' + (e?.message || 'erro'), channel: 'whatsapp', status: 'error', createdBy: currentUser?.id || null }); } catch {}
+            try { await addCommunication({ type: 'communication', userId: user.id, roundId: selectAllCommUsers ? null : selectedCommRound, message: 'Falha: ' + (e?.message || 'erro'), channel: 'whatsapp', status: 'error', createdBy: currentUser?.id || null }); } catch {}
           }
         }
-        await new Promise(r => setTimeout(r, 250));
+        await new Promise(r => setTimeout(r, commsDelayMs));
       }
       alert(`Envio concluído: ${okCount} sucesso, ${failCount} falhas.`);
     } catch (err) {
@@ -4422,7 +4435,7 @@ const AdminPanel = ({ setView }) => {
                           <option key={r.id} value={r.id}>{r.name}</option>
                         ))}
                       </select>
-                      {!selectedCommRound && (
+                      {!selectedCommRound && !selectAllCommUsers && (
                         <p id="err-comm-round" className="text-xs text-red-600 mt-1">Selecione uma rodada.</p>
                       )}
                     </div>
@@ -4538,7 +4551,7 @@ const AdminPanel = ({ setView }) => {
                   <div className="flex items-center gap-3">
                     {(() => {
                       const recipients = getCommRecipients();
-                      const disabled = selectAllCommUsers ? (recipients.length === 0 || !commsMessage || isSendingMassComms) : (!selectedCommUserId || !commsMessage);
+                      const disabled = selectAllCommUsers ? (recipients.length === 0 || !commsMessage || isSendingMassComms) : (!selectedCommUserId || !commsMessage || isSendingSingleComm);
                       const handleClick = () => selectAllCommUsers ? sendMassCommunications() : sendGeneralCommunication();
                       return (
                         <>
@@ -4547,10 +4560,15 @@ const AdminPanel = ({ setView }) => {
                             disabled={disabled}
                             className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-semibold ${disabled ? 'bg-gray-200 text-gray-600 cursor-not-allowed' : 'bg-green-600 text-white hover:bg-green-700'}`}
                           >
-                            {isSendingMassComms && selectAllCommUsers ? (<Loader2 size={18} className="animate-spin" />) : (<Send size={18} />)}
+                            {(isSendingMassComms && selectAllCommUsers) || (isSendingSingleComm && !selectAllCommUsers) ? (<Loader2 size={18} className="animate-spin" />) : (<Send size={18} />)}
                             Enviar Mensagem
                           </button>
                           <span className="text-xs text-gray-500">{selectAllCommUsers ? `Todos os elegíveis (${recipients.length}) via EvolutionAPI.` : 'Envia via EvolutionAPI e registra no histórico.'}</span>
+                          {commFeedback?.text && (
+                            <span role="status" aria-live="polite" className={`text-xs ${commFeedback?.type === 'error' ? 'text-red-600' : 'text-green-600'} ml-2`}>
+                              {commFeedback.text}
+                            </span>
+                          )}
                         </>
                       );
                     })()}
@@ -5933,6 +5951,16 @@ const UserPanel = ({ setView }) => {
                       <input readOnly value={tx?.pixCopiaECola || tx?.qrCode || ''} className="w-full sm:flex-1 px-3 py-2 border rounded-lg text-xs" />
                       <button onClick={handleCopy} className="w-full sm:w-auto px-3 py-2 bg-gray-800 text-white rounded">Copiar</button>
                     </div>
+                    {copied === 'copiado' && (
+                      <div className="mt-1 text-xs text-green-700 flex items-center gap-1" aria-live="polite">
+                        <Check size={14} /> Código copiado!
+                      </div>
+                    )}
+                    {copied === 'erro' && (
+                      <div className="mt-1 text-xs text-red-700" aria-live="polite">
+                        Não foi possível copiar. Copie manualmente.
+                      </div>
+                    )}
                   </div>
                 )}
                 {/* Expiração */}
