@@ -2064,7 +2064,23 @@ const AdminPanel = ({ setView }) => {
     const publish = round?.createdAt ? formatPtBrFlexible(round?.createdAt) : '{DIVULGACAO}';
     const ranking = round?.id ? buildRankingLink(round?.id) : '{RANKING_URL}';
     const brand = getBrandName();
-    return { roundName, userName, link, deadline, publish, ranking, brand };
+    // Inclui também chaves em maiúsculas esperadas pelos templates
+    return {
+      roundName,
+      userName,
+      link,
+      deadline,
+      publish,
+      ranking,
+      brand,
+      RODADA: roundName,
+      NOME: userName,
+      LINK: link,
+      LIMITE: deadline,
+      DIVULGACAO: publish,
+      RANKING_URL: ranking,
+      BRAND: brand
+    };
   };
 
   const buildTemplateText = (key, mode = 'rich') => {
