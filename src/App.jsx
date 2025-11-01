@@ -5,7 +5,7 @@ import { getFirestore, collection, addDoc, updateDoc, deleteDoc, doc, getDocs, g
 import bcrypt from 'bcryptjs';
 import { jsPDF } from 'jspdf';
 import axios from 'axios';
-import { MESSAGE_TEMPLATES, TEMPLATE_CATEGORIES, buildTemplateText as buildTemplateTextUtil, validateMessageTags, normalizeTags } from './utils/messageTemplates.js';
+import { MESSAGE_TEMPLATES, TEMPLATE_CATEGORIES, buildTemplateText as buildTemplateTextUtil, validateMessageTags, normalizeTags, compileTemplate } from './utils/messageTemplates.js';
 
 const firebaseConfig = {
   apiKey: "AIzaSyAZkL5Q4g1tAAVIZP4mhL6EyjLywjmyfX4",
@@ -1928,7 +1928,9 @@ const AdminPanel = ({ setView }) => {
       const user = users.find(u => u.id === selectedCommUserId);
       if (!user) throw new Error('Selecione um destinatário');
       if (!user.whatsapp) throw new Error('Destinatário sem WhatsApp');
-      const message = (commsMessage || '').replace('{NOME}', user.name || '');
+      const base = commsMessage || '';
+      const ctx = { ...getTemplateContext(), userName: user.name || '' };
+      const message = compileTemplate(base, ctx);
       const phone = formatPhoneBR(user.whatsapp);
       await sendTextViaEvolution(phone, message);
 
@@ -1993,7 +1995,8 @@ const AdminPanel = ({ setView }) => {
       let failCount = 0;
       for (const p of recipients) {
         const user = users.find(u => u.id === p.userId);
-        const msg = (commsMessage || '').replace('{NOME}', user?.name || '');
+        const ctx = { ...getTemplateContext(), userName: user?.name || '' };
+        const msg = compileTemplate(commsMessage || '', ctx);
         const phone = formatPhoneBR(user.whatsapp);
         try {
           await sendTextViaEvolution(phone, msg);
@@ -2046,14 +2049,20 @@ const AdminPanel = ({ setView }) => {
   };
 
   const getTemplateContext = () => {
-    const round = selectedCommRound ? rounds.find(r => r.id === selectedCommRound) : null;
+    const fallbackRound = !selectedCommRound
+      ? (rounds.find(r => r.status === 'open')
+        || rounds.find(r => r.status === 'upcoming')
+        || ([...rounds].sort((a, b) => ((b?.number ?? 0) - (a?.number ?? 0)))[0])
+        || null)
+      : null;
+    const round = selectedCommRound ? rounds.find(r => r.id === selectedCommRound) : fallbackRound;
     const roundName = round?.name || 'Rodada';
     const user = selectedCommUserId ? users.find(u => u.id === selectedCommUserId) : null;
     const userName = user?.name || '{NOME}';
     const link = commAppLink || (typeof window !== 'undefined' ? window.location.origin : '');
-    const deadline = formatPtBrFlexible(round?.closeAt) || '{LIMITE}';
-    const publish = formatPtBrFlexible(round?.createdAt) || '{DIVULGACAO}';
-    const ranking = buildRankingLink(round?.id) || '{RANKING_URL}';
+    const deadline = round?.closeAt ? formatPtBrFlexible(round?.closeAt) : '{LIMITE}';
+    const publish = round?.createdAt ? formatPtBrFlexible(round?.createdAt) : '{DIVULGACAO}';
+    const ranking = round?.id ? buildRankingLink(round?.id) : '{RANKING_URL}';
     const brand = getBrandName();
     return { roundName, userName, link, deadline, publish, ranking, brand };
   };
