@@ -58,7 +58,7 @@ export function compileTemplate(raw, context = {}) {
   let out = src;
   const map = {
     NOME: context.NOME ?? context.userName ?? '{NOME}',
-    RODADA: context.RODADA ?? context.roundName ?? '{RODADA}',
+    RODADA: context.RODADA ?? context.roundName ?? 'Rodada',
     LINK: context.LINK ?? context.link ?? '{LINK}',
     LIMITE: context.LIMITE ?? context.deadline ?? '{LIMITE}',
     DIVULGACAO: context.DIVULGACAO ?? context.publish ?? '{DIVULGACAO}',
