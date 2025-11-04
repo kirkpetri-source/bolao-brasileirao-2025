@@ -184,6 +184,7 @@ const AppProvider = ({ children }) => {
   const [establishments, setEstablishments] = useState([]);
   const [settings, setSettings] = useState(null);
   const [communications, setCommunications] = useState([]);
+  const [teamImportRequests, setTeamImportRequests] = useState([]);
   const [loading, setLoading] = useState(true);
 
   // Sessão persistente com timeout de 10 min e renovação automática
@@ -291,7 +292,8 @@ const AppProvider = ({ children }) => {
       onSnapshot(collection(db, 'users'), s => setUsers(s.docs.map(d => { const data = d.data(); const { password, ...rest } = data; return { id: d.id, ...rest }; }))),
       onSnapshot(collection(db, 'establishments'), s => setEstablishments(s.docs.map(d => ({ id: d.id, ...d.data() })))),
       onSnapshot(collection(db, 'settings'), s => setSettings(s.docs.length > 0 ? { id: s.docs[0].id, ...s.docs[0].data() } : null)),
-      onSnapshot(collection(db, 'communications'), s => setCommunications(s.docs.map(d => ({ id: d.id, ...d.data() }))))
+      onSnapshot(collection(db, 'communications'), s => setCommunications(s.docs.map(d => ({ id: d.id, ...d.data() })))),
+      onSnapshot(collection(db, 'team_import_requests'), s => setTeamImportRequests(s.docs.map(d => ({ id: d.id, ...d.data() }))))
     ];
     return () => uns.forEach(u => u());
   }, []);
@@ -358,7 +360,7 @@ const AppProvider = ({ children }) => {
   };
 
   const value = {
-    currentUser, setCurrentUser, users, teams, rounds, predictions, establishments, settings, communications, loading,
+    currentUser, setCurrentUser, users, teams, rounds, predictions, establishments, settings, communications, teamImportRequests, loading,
     login, logout,
     addUser: async (d) => {
       const toSave = { ...d };
@@ -420,6 +422,49 @@ const AppProvider = ({ children }) => {
       for (const team of SERIE_A_2025_TEAMS) {
         await addDoc(collection(db, 'teams'), { ...team, createdAt: serverTimestamp() });
       }
+    },
+    submitImportRequestsFromApi: async () => {
+      requireAdmin();
+      try {
+        const r = await axios.get('/api/brasileirao/teams');
+        const items = Array.isArray(r.data?.teams) ? r.data.teams : [];
+        const normalize = (s) => s?.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().trim();
+        const existingNames = new Set(teams.map(t => normalize(t.name)));
+        for (const it of items) {
+          const nm = normalize(it.name);
+          if (!nm || existingNames.has(nm)) continue;
+          await addDoc(collection(db, 'team_import_requests'), {
+            name: it.name,
+            logo: it.logo || '',
+            normalizedName: nm,
+            status: 'pending',
+            createdAt: serverTimestamp(),
+          });
+        }
+      } catch (err) {
+        console.error('Erro ao buscar times da API:', err);
+        throw new Error('Falha ao buscar times da API');
+      }
+    },
+    approveImportRequest: async (id) => {
+      requireAdmin();
+      const req = teamImportRequests.find(r => r.id === id);
+      if (!req) throw new Error('Solicitação inexistente');
+      if (req.status !== 'pending') throw new Error('Solicitação não está pendente');
+      const normalize = (s) => s?.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().trim();
+      const exists = teams.some(t => normalize(t.name) === (req.normalizedName || normalize(req.name)));
+      if (exists) throw new Error('Já existe um time com esse nome');
+      const teamDoc = await addDoc(collection(db, 'teams'), { name: req.name, logo: req.logo || '', createdAt: serverTimestamp() });
+      await updateDoc(doc(db, 'team_import_requests', id), { status: 'approved', approvedAt: serverTimestamp(), approvedTeamId: teamDoc.id });
+      await addDoc(collection(db, 'audit_logs'), { type: 'team_import_approved', requestId: id, teamId: teamDoc.id, actorId: currentUser?.id || null, at: serverTimestamp() });
+    },
+    rejectImportRequest: async (id, reason) => {
+      requireAdmin();
+      const req = teamImportRequests.find(r => r.id === id);
+      if (!req) throw new Error('Solicitação inexistente');
+      if (req.status !== 'pending') throw new Error('Solicitação não está pendente');
+      await updateDoc(doc(db, 'team_import_requests', id), { status: 'rejected', rejectedAt: serverTimestamp(), reason: reason || '' });
+      await addDoc(collection(db, 'audit_logs'), { type: 'team_import_rejected', requestId: id, actorId: currentUser?.id || null, reason: reason || '', at: serverTimestamp() });
     },
     addRound: async (d) => { requireAdmin(); const r = await addDoc(collection(db, 'rounds'), { ...d, createdAt: serverTimestamp() }); return { id: r.id, ...d }; },
     updateRound: async (id, d) => { requireAdmin(); return await updateDoc(doc(db, 'rounds', id), d); },
@@ -1169,7 +1214,7 @@ const PasswordModal = ({ user, onSave, onCancel }) => {
 };
 
 const AdminPanel = ({ setView }) => {
-  const { currentUser, setCurrentUser, logout, teams, rounds, users, predictions, establishments, settings, communications, addRound, updateRound, deleteRound, addTeam, updateTeam, deleteTeam, updateUser, deleteUser, resetTeamsToSerieA2025, updatePrediction, updateSettings, addEstablishment, updateEstablishment, deleteEstablishment, addCommunication, updateCommunication } = useApp();
+  const { currentUser, setCurrentUser, logout, teams, rounds, users, predictions, establishments, settings, communications, addRound, updateRound, deleteRound, addTeam, updateTeam, deleteTeam, updateUser, deleteUser, resetTeamsToSerieA2025, updatePrediction, updateSettings, addEstablishment, updateEstablishment, deleteEstablishment, addCommunication, updateCommunication, teamImportRequests, submitImportRequestsFromApi, approveImportRequest, rejectImportRequest } = useApp();
   
   console.log('AdminPanel - Settings:', settings);
   
@@ -4063,6 +4108,42 @@ const AdminPanel = ({ setView }) => {
                 <button onClick={() => { setEditingTeam(null); setShowTeamForm(true); }} className="w-full sm:w-auto flex items-center justify-center gap-2 bg-green-600 text-white px-5 py-2.5 rounded-lg text-sm sm:text-base">
                   <Plus size={20} /> Novo Time
                 </button>
+              </div>
+            </div>
+            <div className="bg-white rounded-lg shadow mb-6 p-4">
+              <div className="flex items-center justify-between mb-3">
+                <div>
+                  <h3 className="text-lg font-bold">Fila de Importação de Times</h3>
+                  <p className="text-sm text-gray-600">Requisições pendentes aguardando aprovação</p>
+                </div>
+                <button onClick={submitImportRequestsFromApi} className="flex items-center gap-2 bg-indigo-600 text-white px-4 py-2 rounded-lg hover:bg-indigo-700 text-sm">
+                  <RefreshCcw size={18} /> Buscar times da API
+                </button>
+              </div>
+              <div className="space-y-2">
+                {(teamImportRequests || []).filter(r => r.status === 'pending').length === 0 ? (
+                  <div className="text-sm text-gray-500">Nenhuma solicitação pendente.</div>
+                ) : (
+                  (teamImportRequests || []).filter(r => r.status === 'pending').map(req => (
+                    <div key={req.id} className="flex items-center justify-between border rounded p-3">
+                      <div className="flex items-center gap-3">
+                        <img src={getSafeLogo({ name: req.name, logo: req.logo })} alt={req.name} className="w-8 h-8 object-contain rounded bg-white ring-1 ring-gray-200" />
+                        <div>
+                          <div className="font-medium">{req.name}</div>
+                          <div className="text-xs text-gray-500">{req.normalizedName}</div>
+                        </div>
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <span className="px-2 py-1 text-xs rounded bg-yellow-100 text-yellow-700">pendente</span>
+                        <button onClick={() => approveImportRequest(req.id)} className="text-white bg-green-600 hover:bg-green-700 px-3 py-1.5 rounded text-sm">Aprovar</button>
+                        <button onClick={() => {
+                          const reason = window.prompt('Motivo da rejeição (opcional):') || '';
+                          rejectImportRequest(req.id, reason);
+                        }} className="text-white bg-red-600 hover:bg-red-700 px-3 py-1.5 rounded text-sm">Rejeitar</button>
+                      </div>
+                    </div>
+                  ))
+                )}
               </div>
             </div>
             <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-3">
