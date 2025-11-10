@@ -3401,7 +3401,7 @@ const AdminPanel = ({ setView }) => {
                   {pdfLoadingRoundId === ('final-' + round.id) ? (
                     <Loader2 size={18} className="animate-spin" />
                   ) : (
-                    <Download size={18} />
+                    <FileText size={18} />
                   )}
                 </button>
               )}
