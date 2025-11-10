@@ -2978,6 +2978,204 @@ const AdminPanel = ({ setView }) => {
     }
   };
 
+  // Relatório oficial da rodada finalizada: cards por participante com Jogo | Palpite | Placar Final | Pts
+  const generateFinalizedRoundReportPDF = async (roundId) => {
+    try {
+      if (!roundId) { alert('Selecione uma rodada finalizada.'); return; }
+      setPdfLoadingRoundId('final-' + roundId);
+
+      const round = rounds.find(r => r.id === roundId);
+      if (!round || round.status !== 'finished') {
+        alert('Rodada inválida ou ainda não finalizada.');
+        return;
+      }
+
+      const pdf = new jsPDF('p', 'mm', 'a4');
+      const pageWidth = pdf.internal.pageSize.getWidth();
+      const pageHeight = pdf.internal.pageSize.getHeight();
+      const margin = 15;
+      const contentWidth = pageWidth - margin * 2;
+
+      const participants = getRoundParticipants(roundId).filter(p => p.paid);
+      if (participants.length === 0) { alert('Não há participantes pagos nesta rodada.'); return; }
+
+      const usersById = new Map(users.map(u => [u.id, u]));
+      const teamsById = new Map(teams.map(t => [t.id, t]));
+      const matches = round.matches || [];
+
+      // Paleta
+      const primary = [22, 163, 74];
+      const gray700 = [55, 65, 81];
+      const lightBg = [248, 250, 252];
+      const border = [229, 231, 235];
+
+      // Helpers
+      const formatDate = (ts) => {
+        try {
+          const d = round?.closeAt ? new Date(round.closeAt) : (round?.createdAt?.toDate ? round.createdAt.toDate() : new Date());
+          const yyyy = d.getFullYear();
+          const mm = String(d.getMonth() + 1).padStart(2, '0');
+          const dd = String(d.getDate()).padStart(2, '0');
+          return `${dd}/${mm}/${yyyy}`;
+        } catch { return new Date().toLocaleDateString('pt-BR'); }
+      };
+
+      const extractRoundNumber = () => {
+        const m = (round.name || '').match(/(\d+)/);
+        return m ? m[1] : '';
+      };
+
+      const resultLabel = (home, away) => {
+        if (home > away) return 'Mandante';
+        if (home < away) return 'Visitante';
+        return 'Empate';
+      };
+
+      const scorePoints = (ph, pa, rh, ra) => {
+        if (ph === rh && pa === ra) return 3;
+        return resultLabel(ph, pa) === resultLabel(rh, ra) ? 1 : 0;
+      };
+
+      // Metadados
+      try {
+        pdf.setProperties({
+          title: `Relatório Rodada ${round.name}`,
+          subject: 'Comprovante oficial da rodada',
+          author: 'Bolão Brasileirão 2025',
+          keywords: 'bolão, brasileirão, relatório, rodada, pdf',
+          creator: 'Bolão App'
+        });
+      } catch {}
+
+      const drawHeader = () => {
+        pdf.setFillColor(...primary);
+        pdf.rect(0, 0, pageWidth, 26, 'F');
+        pdf.setTextColor(255, 255, 255);
+        pdf.setFont(undefined, 'bold');
+        pdf.setFontSize(14);
+        pdf.text('BOLÃO BRASILEIRÃO 2025', margin, 11);
+        pdf.setFont(undefined, 'normal');
+        pdf.setFontSize(11);
+        pdf.text(`Relatório da ${round.name}`, margin, 19);
+        pdf.setFontSize(9);
+        pdf.text(`Data da rodada: ${formatDate(round?.closeAt)}`, pageWidth - margin, 11, { align: 'right' });
+        pdf.text(`Gerado em: ${new Date().toLocaleString('pt-BR')}`, pageWidth - margin, 19, { align: 'right' });
+        pdf.setTextColor(0,0,0);
+        return 32;
+      };
+
+      const drawFooterPagination = () => {
+        const pageCount = pdf.internal.getNumberOfPages();
+        for (let i = 1; i <= pageCount; i++) {
+          pdf.setPage(i);
+          pdf.setFontSize(8);
+          pdf.setTextColor(120, 120, 120);
+          pdf.setFont(undefined, 'normal');
+          pdf.text(`Relatório oficial da rodada • v1.0`, margin, pageHeight - 8);
+          pdf.text(`Página ${i} de ${pageCount}`, pageWidth - margin, pageHeight - 8, { align: 'right' });
+        }
+      };
+
+      let y = drawHeader();
+
+      // Lista completa – cartões por participante
+      const rowH = 7; // altura por linha de jogo
+      const headerH = 22; // cabeçalho do cartão
+      const tablePad = 8; // padding interno
+
+      // Tabela com 4 colunas: Jogo | Palpite | Placar Final | Pts
+      const cols = [
+        { key: 'jogo', label: 'Jogo', w: contentWidth * 0.40, align: 'left' },
+        { key: 'palpite', label: 'Palpite', w: contentWidth * 0.22, align: 'center' },
+        { key: 'placar', label: 'Placar Final', w: contentWidth * 0.26, align: 'center' },
+        { key: 'pts', label: 'Pts', w: contentWidth * 0.12, align: 'center' },
+      ];
+
+      let idx = 0;
+      participants.forEach((p) => {
+        const user = usersById.get(p.userId);
+        if (!user) return;
+
+        const tableH = rowH * matches.length + tablePad * 2 + 12; // inclui header da tabela
+        const cardH = headerH + tableH;
+        if (y + cardH > pageHeight - 16) { pdf.addPage(); y = drawHeader(); }
+
+        // Cartão
+        pdf.setFillColor(...lightBg);
+        pdf.setDrawColor(...border);
+        pdf.roundedRect(margin, y, contentWidth, cardH, 3, 3, 'FD');
+
+        // Cabeçalho do cartão
+        pdf.setFontSize(12);
+        pdf.setFont(undefined, 'bold');
+        pdf.text(`${++idx}. ${user.name}`, margin + 8, y + 10);
+        pdf.setFontSize(9);
+        pdf.setFont(undefined, 'normal');
+        pdf.setTextColor(...gray700);
+        const est = establishments.find(e => e.id === p.establishmentId)?.name || 'Nenhum';
+        pdf.text(`Cartela: ${p.cartelaCode}  •  Estabelecimento: ${est}`, margin + 8, y + 16);
+        pdf.setTextColor(0,0,0);
+
+        // Tabela – cabeçalho
+        let tx = margin + 8;
+        let ty = y + headerH + 10;
+        pdf.setFont(undefined, 'bold');
+        pdf.setFontSize(9);
+        cols.forEach((c) => {
+          const hx = tx + (c.align === 'center' ? c.w/2 : c.align === 'right' ? c.w - 1 : 1);
+          pdf.text(c.label, hx, ty, { align: c.align });
+          tx += c.w;
+        });
+
+        // Linhas da tabela
+        pdf.setFont(undefined, 'normal');
+        pdf.setFontSize(9);
+        let rowY = ty + 6;
+        matches.forEach((m, i) => {
+          const home = teamsById.get(m.homeTeamId);
+          const away = teamsById.get(m.awayTeamId);
+          const pred = predictions.find(x => x.userId === p.userId && x.roundId === roundId && x.matchId === m.id && (x.cartelaCode || 'ANTIGA') === p.cartelaCode);
+          const homeScore = m.homeScore ?? 0;
+          const awayScore = m.awayScore ?? 0;
+          const ph = pred?.homeScore ?? '-';
+          const pa = pred?.awayScore ?? '-';
+          const pts = pred && m.finished && m.homeScore != null && m.awayScore != null ? scorePoints(ph, pa, homeScore, awayScore) : 0;
+
+          let cx = margin + 8;
+          const cells = [
+            { text: `${i+1}) ${home?.name} x ${away?.name}`, w: cols[0].w, align: 'left' },
+            { text: `${ph} x ${pa}`, w: cols[1].w, align: 'center' },
+            { text: `${homeScore} x ${awayScore}`, w: cols[2].w, align: 'center' },
+            { text: String(pts), w: cols[3].w, align: 'center' },
+          ];
+          cells.forEach((cell) => {
+            const tx2 = cx + (cell.align === 'center' ? cell.w/2 : cell.align === 'right' ? cell.w - 1 : 1);
+            pdf.text(cell.text, tx2, rowY, { align: cell.align });
+            cx += cell.w;
+          });
+          rowY += rowH;
+        });
+
+        y += cardH + 8;
+      });
+
+      // Rodapé com paginação e metadados
+      drawFooterPagination();
+
+      // Nome do arquivo padrão: Relatorio_Rodada_[Número]_[Data].pdf
+      const num = extractRoundNumber();
+      const dateSafe = formatDate(round?.closeAt).replace(/\//g, '-');
+      const fileName = `Relatorio_Rodada_${num || round.name.replace(/\s+/g,'_')}_${dateSafe}.pdf`;
+      pdf.save(fileName);
+
+    } catch (err) {
+      console.error('Erro ao gerar PDF finalizado:', err);
+      alert('Erro ao gerar PDF: ' + (err?.message || 'erro'));
+    } finally {
+      setPdfLoadingRoundId(null);
+    }
+  };
+
   const handleResetTeams = async () => {
     if (!confirm('⚠️ ATENÇÃO!\n\nIsso irá DELETAR todos os times cadastrados e recarregar apenas os 20 times oficiais da Série A 2025.\n\n⚠️ CUIDADO: Se houver rodadas criadas com times antigos, elas podem ficar quebradas!\n\nDeseja continuar?')) {
       return;
@@ -3117,6 +3315,10 @@ const AdminPanel = ({ setView }) => {
         setTimeout(() => {
           generateRoundPDF(id);
         }, 500);
+        // Geração automática do relatório oficial da rodada finalizada
+        setTimeout(() => {
+          generateFinalizedRoundReportPDF(id);
+        }, 1200);
       }
     }
   };
@@ -3181,6 +3383,22 @@ const AdminPanel = ({ setView }) => {
                   disabled={pdfLoadingRoundId === round.id}
                 >
                   {pdfLoadingRoundId === round.id ? (
+                    <Loader2 size={18} className="animate-spin" />
+                  ) : (
+                    <Download size={18} />
+                  )}
+                </button>
+              )}
+              {round.status === 'finished' && (
+                <button
+                  onClick={() => generateFinalizedRoundReportPDF(round.id)}
+                  className={`p-2 rounded-lg ${pdfLoadingRoundId === ('final-' + round.id) ? 'bg-purple-100 text-purple-400 opacity-60 cursor-not-allowed' : 'bg-purple-100 text-purple-700 hover:bg-purple-200'}`}
+                  title="Relatório oficial da rodada (PDF)"
+                  aria-label="Relatório oficial da rodada (PDF)"
+                  aria-busy={pdfLoadingRoundId === ('final-' + round.id)}
+                  disabled={pdfLoadingRoundId === ('final-' + round.id)}
+                >
+                  {pdfLoadingRoundId === ('final-' + round.id) ? (
                     <Loader2 size={18} className="animate-spin" />
                   ) : (
                     <Download size={18} />
@@ -5012,6 +5230,11 @@ const UserPanel = ({ setView }) => {
   const [showEstablishmentModal, setShowEstablishmentModal] = useState(false);
   const [showRulesModal, setShowRulesModal] = useState(false);
   const [cartelaDetails, setCartelaDetails] = useState(null);
+  // Estados para a aba "Rodadas Finalizadas"
+  const [selectedFinishedRound, setSelectedFinishedRound] = useState(null);
+  const [finishedStartDate, setFinishedStartDate] = useState('');
+  const [finishedEndDate, setFinishedEndDate] = useState('');
+  const [finishedPeriod, setFinishedPeriod] = useState('all'); // all | 3m | 6m | 12m
   const [paymentModalOpen, setPaymentModalOpen] = useState(false);
   const [paymentContext, setPaymentContext] = useState(null);
   const [paymentLocks, setPaymentLocks] = useState({});
@@ -6400,6 +6623,78 @@ const UserPanel = ({ setView }) => {
     return selectedRankingRound ? getRoundPrize(selectedRankingRound) : null;
   }, [selectedRankingRound, settings]);
 
+  // Utilitário de timestamp de rodada para ordenação/filtragem
+  const roundToTimestamp = (r) => {
+    if (r?.closeAt) {
+      const t = new Date(r.closeAt).getTime();
+      if (!isNaN(t)) return t;
+    }
+    const ca = r?.createdAt;
+    if (ca && typeof ca.toDate === 'function') {
+      return ca.toDate().getTime();
+    }
+    if (ca && typeof ca === 'object' && typeof ca.seconds === 'number') {
+      return ca.seconds * 1000;
+    }
+    return typeof r?.number === 'number' ? r.number : 0;
+  };
+
+  // Lista de rodadas finalizadas com ordenação cronológica (mais recente primeiro)
+  const finishedRoundsAll = useMemo(() => {
+    return rounds
+      .filter(r => r.status === 'finished')
+      .sort((a, b) => roundToTimestamp(b) - roundToTimestamp(a));
+  }, [rounds]);
+
+  // Nesta aba não mostramos a mais recente: base exclui a primeira (mais recente)
+  const finishedRoundsBase = useMemo(() => {
+    if (finishedRoundsAll.length === 0) return finishedRoundsAll;
+    const latestId = finishedRoundsAll[0].id;
+    return finishedRoundsAll.filter(r => r.id !== latestId);
+  }, [finishedRoundsAll]);
+
+  // Aplicar filtros por data/período
+  const filteredFinishedRounds = useMemo(() => {
+    const now = Date.now();
+    const periodMs = {
+      '3m': 1000 * 60 * 60 * 24 * 90,
+      '6m': 1000 * 60 * 60 * 24 * 180,
+      '12m': 1000 * 60 * 60 * 24 * 365,
+      'all': null
+    }[finishedPeriod] || null;
+
+    const startTs = finishedStartDate ? new Date(finishedStartDate).getTime() : null;
+    const endTs = finishedEndDate ? new Date(finishedEndDate).getTime() : null;
+    const periodStart = periodMs ? now - periodMs : null;
+
+    return finishedRoundsBase.filter(r => {
+      const ts = roundToTimestamp(r);
+      if (periodStart && ts < periodStart) return false;
+      if (startTs && ts < startTs) return false;
+      if (endTs && ts > endTs) return false;
+      return true;
+    });
+  }, [finishedRoundsBase, finishedStartDate, finishedEndDate, finishedPeriod]);
+
+  // Selecionar automaticamente a rodada mais recente do filtro ao entrar/alterar filtros
+  useEffect(() => {
+    if (activeTab === 'finished') {
+      const latest = filteredFinishedRounds[0];
+      if (latest && selectedFinishedRound !== latest.id) {
+        setSelectedFinishedRound(latest.id);
+      }
+    }
+  }, [activeTab, filteredFinishedRounds]);
+
+  // Cache do ranking e prêmio para rodadas finalizadas
+  const finishedRanking = useMemo(() => {
+    return selectedFinishedRound ? getRankingForRound(selectedFinishedRound) : [];
+  }, [selectedFinishedRound, predictions, rounds, users]);
+
+  const finishedPrize = useMemo(() => {
+    return selectedFinishedRound ? getRoundPrize(selectedFinishedRound) : null;
+  }, [selectedFinishedRound, settings]);
+
   return (
     <div className="min-h-screen bg-gray-50">
       <div className="bg-gradient-to-r from-green-600 to-green-700 text-white shadow-lg">
@@ -6420,10 +6715,19 @@ const UserPanel = ({ setView }) => {
       <div className="bg-white border-b">
         <div className="max-w-7xl mx-auto px-4">
           <div className="flex gap-6 items-center">
-            {['predictions', 'ranking', 'history'].map(tab => (
+            {['predictions', 'ranking', 'finished', 'history'].map(tab => (
               <button key={tab} onClick={() => setActiveTab(tab)} className={`py-4 px-2 border-b-2 font-medium ${activeTab === tab ? 'border-green-600 text-green-600' : 'border-transparent text-gray-500'}`}>
                 {tab === 'predictions' && <><Target className="inline mr-2" size={18} />Palpites</>}
                 {tab === 'ranking' && <><TrendingUp className="inline mr-2" size={18} />Ranking</>}
+                {tab === 'finished' && <>
+                  <Calendar className="inline mr-2" size={18} />Rodadas Finalizadas
+                  {finishedRoundsBase.length > 0 && (
+                    <span className="ml-2 bg-purple-100 text-purple-700 px-2 py-0.5 rounded-full text-xs"
+                          title="Quantidade de rodadas finalizadas disponíveis">
+                      {finishedRoundsBase.length}
+                    </span>
+                  )}
+                </>}
                 {tab === 'history' && <><Calendar className="inline mr-2" size={18} />Minhas Rodadas</>}
               </button>
             ))}
@@ -6747,6 +7051,179 @@ const UserPanel = ({ setView }) => {
                   </table>
                   
                   {ranking.length === 0 && (
+                    <div className="p-12 text-center">
+                      <Users className="mx-auto text-gray-400 mb-4" size={48} />
+                      <h3 className="text-xl font-semibold mb-2">Nenhum participante pagou ainda</h3>
+                      <p className="text-gray-500">Apenas participantes com pagamento confirmado aparecem no ranking</p>
+                    </div>
+                  )}
+                </div>
+              </div>
+            )}
+          </div>
+        )}
+
+        {activeTab === 'finished' && (
+          <div className="transition-opacity">
+            <div className="flex justify-between items-start mb-6">
+              <div>
+                <h2 className="text-2xl font-bold">Rodadas Finalizadas</h2>
+                <p className="text-gray-600 mt-1">Ranking de rodadas antigas • Filtre por período</p>
+              </div>
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-3 w-full md:w-auto">
+                <div>
+                  <label className="block text-sm font-medium mb-1">Período</label>
+                  <select
+                    value={finishedPeriod}
+                    onChange={(e) => setFinishedPeriod(e.target.value)}
+                    className="w-full px-4 py-2 border rounded-lg bg-white"
+                    title="Selecione um período rápido (3, 6, 12 meses ou todos)"
+                  >
+                    <option value="all">Todos</option>
+                    <option value="3m">Últimos 3 meses</option>
+                    <option value="6m">Últimos 6 meses</option>
+                    <option value="12m">Últimos 12 meses</option>
+                  </select>
+                </div>
+                <div>
+                  <label className="block text-sm font-medium mb-1">Início</label>
+                  <input
+                    type="date"
+                    value={finishedStartDate}
+                    onChange={(e) => setFinishedStartDate(e.target.value)}
+                    className="w-full px-4 py-2 border rounded-lg bg-white"
+                    title="Data inicial para filtrar rodadas finalizadas"
+                  />
+                </div>
+                <div>
+                  <label className="block text-sm font-medium mb-1">Fim</label>
+                  <input
+                    type="date"
+                    value={finishedEndDate}
+                    onChange={(e) => setFinishedEndDate(e.target.value)}
+                    className="w-full px-4 py-2 border rounded-lg bg-white"
+                    title="Data final para filtrar rodadas finalizadas"
+                  />
+                </div>
+              </div>
+            </div>
+
+            <div className="flex justify-between items-start mb-6">
+              <div className="w-64">
+                <label className="block text-sm font-medium mb-2">Selecione a Rodada</label>
+                <select
+                  value={selectedFinishedRound || ''}
+                  onChange={(e) => setSelectedFinishedRound(e.target.value)}
+                  className="w-full px-4 py-2 border rounded-lg bg-white"
+                  title="Escolha a rodada finalizada para ver o ranking"
+                >
+                  {filteredFinishedRounds.length === 0 && (
+                    <option value="">Nenhuma rodada finalizada</option>
+                  )}
+                  {filteredFinishedRounds.map((round) => (
+                    <option key={round.id} value={round.id}>
+                      {round.name}
+                    </option>
+                  ))}
+                </select>
+              </div>
+              <div className="flex items-center gap-3">
+                <button
+                  onClick={() => { setFinishedStartDate(''); setFinishedEndDate(''); setFinishedPeriod('all'); }}
+                  className="px-4 py-2 border rounded-lg bg-white hover:bg-gray-50"
+                  title="Limpar filtros aplicados"
+                >
+                  Limpar filtros
+                </button>
+              </div>
+            </div>
+
+            {!selectedFinishedRound || filteredFinishedRounds.length === 0 ? (
+              <div className="bg-white rounded-xl p-12 text-center border-2 border-dashed">
+                <Trophy className="mx-auto text-gray-400 mb-4" size={48} />
+                <h3 className="text-xl font-semibold mb-2">Nenhuma rodada finalizada</h3>
+                <p className="text-gray-500">Use os filtros acima para encontrar rodadas antigas</p>
+              </div>
+            ) : (
+              <div className="space-y-6">
+                {finishedPrize && finishedPrize.winners.length > 0 && (
+                  <div className="bg-gradient-to-br from-yellow-400 via-yellow-500 to-orange-500 rounded-xl p-8 text-white">
+                    <div className="flex items-center gap-3 mb-6">
+                      <Trophy size={28} />
+                      <h3 className="text-2xl font-bold">Premiação</h3>
+                    </div>
+                    <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                      <div className="bg-white/10 rounded-lg p-4">
+                        <p className="text-sm text-yellow-100">Total Pago</p>
+                        <p className="text-2xl font-bold">R$ {finishedPrize.totalPaid.toFixed(2)}</p>
+                      </div>
+                      <div className="bg-white/10 rounded-lg p-4">
+                        <p className="text-sm text-yellow-100">Premiação (85%)</p>
+                        <p className="text-2xl font-bold">R$ {finishedPrize.prizePool.toFixed(2)}</p>
+                      </div>
+                      <div className="bg-white/10 rounded-lg p-4">
+                        <p className="text-sm text-yellow-100">Por vencedor</p>
+                        <p className="text-2xl font-bold">R$ {finishedPrize.prizePerWinner.toFixed(2)}</p>
+                      </div>
+                    </div>
+                  </div>
+                )}
+
+                <div className="bg-white rounded-xl overflow-hidden shadow">
+                  <table className="min-w-full">
+                    <thead>
+                      <tr className="bg-gray-50">
+                        <th className="px-6 py-4 text-left text-xs font-medium text-gray-500 uppercase">Participante</th>
+                        <th className="px-6 py-4 text-center text-xs font-medium text-gray-500 uppercase">Cartela</th>
+                        <th className="px-6 py-4 text-center text-xs font-medium text-gray-500 uppercase">Estabelecimento</th>
+                        <th className="px-6 py-4 text-center text-xs font-medium text-gray-500 uppercase">Pontos</th>
+                        <th className="px-6 py-4 text-center text-xs font-medium text-gray-500 uppercase">Premiação</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y">
+                      {finishedRanking.map((item) => {
+                        const isWinner = finishedPrize && finishedPrize.winners.some(w => w.user.id === item.user.id && w.cartelaCode === item.cartelaCode);
+                        const establishment = establishments.find(e => e.id === item.establishmentId);
+                        return (
+                          <tr key={`${item.user.id}-${item.cartelaCode}`}>
+                            <td className="px-6 py-4">
+                              <div className="flex items-center gap-3">
+                                <div className="w-10 h-10 rounded-full bg-green-100 text-green-700 flex items-center justify-center font-bold">
+                                  {item.user.name?.charAt(0) || '?'}
+                                </div>
+                                <div>
+                                  <p className="font-medium">{item.user.name}</p>
+                                  <p className="text-xs text-gray-500">{item.user.whatsapp}</p>
+                                </div>
+                              </div>
+                            </td>
+                            <td className="px-6 py-4 text-center">
+                              <span className="font-mono text-sm bg-blue-100 text-blue-700 px-2 py-1 rounded">{item.cartelaCode}</span>
+                            </td>
+                            <td className="px-6 py-4 text-center">
+                              {establishment ? (
+                                <span className="text-sm font-medium text-orange-600" title="Estabelecimento vinculador da cartela">{establishment.name}</span>
+                              ) : (
+                                <span className="text-xs text-gray-400">Nenhum</span>
+                              )}
+                            </td>
+                            <td className="px-6 py-4 text-center">
+                              <span className="text-xl font-bold text-green-600">{item.points}</span>
+                            </td>
+                            <td className="px-6 py-4 text-center">
+                              {isWinner && finishedPrize ? (
+                                <span className="text-lg font-bold text-green-600">R$ {finishedPrize.prizePerWinner.toFixed(2)}</span>
+                              ) : (
+                                <span className="text-gray-400">-</span>
+                              )}
+                            </td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+
+                  {finishedRanking.length === 0 && (
                     <div className="p-12 text-center">
                       <Users className="mx-auto text-gray-400 mb-4" size={48} />
                       <h3 className="text-xl font-semibold mb-2">Nenhum participante pagou ainda</h3>
