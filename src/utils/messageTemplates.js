@@ -9,7 +9,8 @@ export const ALLOWED_TAGS = [
   'DIVULGACAO',
   'RANKING_URL',
   'BRAND',
-  'PIX'
+  'PIX',
+  'DESTINATARIO'
 ];
 
 // Template definitions (rich and plain)
@@ -65,7 +66,8 @@ export function compileTemplate(raw, context = {}) {
     DIVULGACAO: context.DIVULGACAO ?? context.publish ?? '{DIVULGACAO}',
     RANKING_URL: context.RANKING_URL ?? context.ranking ?? '{RANKING_URL}',
     BRAND: context.BRAND ?? context.brand ?? '{BRAND}',
-    PIX: context.PIX ?? context.pix ?? '{PIX}'
+    PIX: context.PIX ?? context.pix ?? '{PIX}',
+    DESTINATARIO: context.DESTINATARIO ?? context.destinatario ?? context.recipient ?? '{DESTINATARIO}'
   };
   for (const tag of ALLOWED_TAGS) {
     const val = map[tag] ?? `{${tag}}`;

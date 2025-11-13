@@ -94,7 +94,7 @@ const initializeDatabase = async () => {
 
     if (settingsSnapshot.empty) {
       await addDoc(collection(db, 'settings'), {
-        whatsappMessage: '🏆 *BOLÃO BRASILEIRÃO 2025*\n\n📋 *{RODADA}*\n🎫 *Cartela: {CARTELA}*\n✅ Confirmado!\n\n{PALPITES}\n\n💰 R$ 15,00\n⚠️ *Não pode alterar após pagamento*\n\nBoa sorte! 🍀',
+        whatsappMessage: '🏆 *BOLÃO BRASILEIRÃO 2025*\n\n📋 *{RODADA}*\n🎫 *Cartela: {CARTELA}*\n✅ Confirmado!\n\n{PALPITES}\n\n🏦 Pagamento via PIX\n🔑 Chave: {PIX}\n👤 Destinatário: {DESTINATARIO}\n\n💰 R$ 15,00\n⚠️ *Não pode alterar após pagamento*\n\nBoa sorte! 🍀',
         chargeMessageTemplate: 'Olá {NOME},\n\nIdentificamos que o pagamento da sua cartela da {RODADA} ainda está pendente.\n\nValor: R$ {VALOR}\nCartela: {CARTELA}\n\nPor favor, conclua o pagamento para validar sua participação no ranking e na premiação. Obrigado! 🙏',
         devolution: {
           instanceName: '',
@@ -113,7 +113,7 @@ const initializeDatabase = async () => {
           notifyEnabled: true,
           notifyEvents: { charges: true, approvals: true, results: true },
           defaultTemplates: {
-            confirm: '🏆 *BOLÃO BRASILEIRÃO 2025*\n\n📋 *{RODADA}*\n🎫 *Cartela: {CARTELA}*\n✅ Confirmado!\n\n{PALPITES}\n\n💰 R$ 15,00\n⚠️ *Não pode alterar após pagamento*\n\nBoa sorte! 🍀',
+            confirm: '🏆 *BOLÃO BRASILEIRÃO 2025*\n\n📋 *{RODADA}*\n🎫 *Cartela: {CARTELA}*\n✅ Confirmado!\n\n{PALPITES}\n\n🏦 Pagamento via PIX\n🔑 Chave: {PIX}\n👤 Destinatário: {DESTINATARIO}\n\n💰 R$ 15,00\n⚠️ *Não pode alterar após pagamento*\n\nBoa sorte! 🍀',
             charge: 'Olá {NOME},\n\nIdentificamos que o pagamento da sua cartela da {RODADA} ainda está pendente.\n\nValor: R$ {VALOR}\nCartela: {CARTELA}\n\nPor favor, conclua o pagamento para validar sua participação no ranking e na premiação. Obrigado! 🙏'
           }
         },
@@ -143,7 +143,7 @@ const initializeDatabase = async () => {
   }
 };
 
-const sendWhatsAppMessage = (userPhone, roundName, predictions, teams, messageTemplate, cartelaCode) => {
+const sendWhatsAppMessage = (userPhone, roundName, predictions, teams, messageTemplate, cartelaCode, pixKey, pixRecipientName) => {
   let palpitesText = '';
   predictions.forEach((pred, i) => {
     const homeTeam = teams.find(t => t.id === pred.match.homeTeamId);
@@ -152,10 +152,20 @@ const sendWhatsAppMessage = (userPhone, roundName, predictions, teams, messageTe
   });
   
   // Usar a mensagem do template fornecido
-  const message = messageTemplate
+  let message = messageTemplate
     .replace('{RODADA}', roundName)
     .replace('{CARTELA}', cartelaCode)
     .replace('{PALPITES}', palpitesText.trim());
+
+  // Incluir PIX e destinatário (substituir tags se existirem, ou anexar)
+  const hasPixTag = /\{PIX\}/.test(message);
+  const hasDestTag = /\{DESTINATARIO\}/.test(message);
+  if (hasPixTag) message = message.replace('{PIX}', pixKey || '{PIX}');
+  if (hasDestTag) message = message.replace('{DESTINATARIO}', pixRecipientName || '{DESTINATARIO}');
+  const extras = [];
+  if (!hasPixTag && pixKey) extras.push(`🔑 Chave PIX: ${pixKey}`);
+  if (!hasDestTag && pixRecipientName) extras.push(`👤 Destinatário: ${pixRecipientName}`);
+  if (extras.length) message = `${message}\n\n${extras.join('\n')}`;
   
   console.log('Mensagem formatada:', message);
   
@@ -1431,7 +1441,7 @@ const AdminPanel = ({ setView }) => {
       setWhatsappMessage(settings.whatsappMessage);
     } else if (settings && !settings.whatsappMessage) {
       console.log('Usando mensagem padrão');
-      setWhatsappMessage('🏆 *BOLÃO BRASILEIRÃO 2025*\n\n📋 *{RODADA}*\n🎫 *Cartela: {CARTELA}*\n✅ Confirmado!\n\n{PALPITES}\n\n💰 R$ 15,00\n⚠️ *Não pode alterar após pagamento*\n\nBoa sorte! 🍀');
+      setWhatsappMessage('🏆 *BOLÃO BRASILEIRÃO 2025*\n\n📋 *{RODADA}*\n🎫 *Cartela: {CARTELA}*\n✅ Confirmado!\n\n{PALPITES}\n\n🏦 Pagamento via PIX\n🔑 Chave: {PIX}\n👤 Destinatário: {DESTINATARIO}\n\n💰 R$ 15,00\n⚠️ *Não pode alterar após pagamento*\n\nBoa sorte! 🍀');
     }
 
     // Bet value
@@ -3910,14 +3920,14 @@ const AdminPanel = ({ setView }) => {
 
                 <div className="bg-white rounded-xl shadow-sm border p-6">
                   <h3 className="text-lg font-bold mb-4">Template de Mensagens Padrão</h3>
-                  <p className="text-gray-600 text-sm mb-4">Use {'{RODADA}'}, {'{CARTELA}'}, {'{PALPITES}'}.</p>
+                  <p className="text-gray-600 text-sm mb-4">Use {'{RODADA}'}, {'{CARTELA}'}, {'{PALPITES}'}, {'{PIX}'}, {'{DESTINATARIO}'}.</p>
                   <textarea value={whatsappMessage} onChange={(e) => setWhatsappMessage(e.target.value)} className="w-full px-4 py-3 border rounded-lg font-mono text-sm" rows="8" />
                   <div className="mt-4">
                     <label className="block text-sm font-medium mb-2">Template de Cobrança</label>
                     <textarea value={chargeMessageTemplate} onChange={(e) => setChargeMessageTemplate(e.target.value)} className="w-full px-4 py-3 border rounded-lg font-mono text-sm" rows="6" />
                   </div>
                   <div className="flex sm:justify-end gap-3 mt-4">
-                    <button onClick={() => { setWhatsappApiToken(''); setWhatsappNumber(''); setDevolutionLink(''); setDevolutionInstance(''); setDevolutionToken(''); setWhatsappNotifyEnabled(true); setWhatsappNotifyEvents({ charges: true, approvals: true, results: true }); setWhatsappMessage(settings?.whatsappMessage || '🏆 *BOLÃO BRASILEIRÃO 2025*\n\n📋 *{RODADA}*\n🎫 *Cartela: {CARTELA}*\n✅ Confirmado!\n\n{PALPITES}\n\n💰 R$ 15,00\n⚠️ *Não pode alterar após pagamento*\n\nBoa sorte! 🍀'); setChargeMessageTemplate(settings?.chargeMessageTemplate || 'Olá {NOME},\n\nIdentificamos que o pagamento da sua cartela da {RODADA} ainda está pendente.\n\nValor: R$ {VALOR}\nCartela: {CARTELA}\n\nPor favor, conclua o pagamento para validar sua participação no ranking e na premiação. Obrigado! 🙏'); }} className="px-6 py-2 border rounded-lg inline-flex items-center gap-2"><RefreshCcw size={16} />Restaurar Padrões</button>
+                    <button onClick={() => { setWhatsappApiToken(''); setWhatsappNumber(''); setDevolutionLink(''); setDevolutionInstance(''); setDevolutionToken(''); setWhatsappNotifyEnabled(true); setWhatsappNotifyEvents({ charges: true, approvals: true, results: true }); setWhatsappMessage(settings?.whatsappMessage || '🏆 *BOLÃO BRASILEIRÃO 2025*\n\n📋 *{RODADA}*\n🎫 *Cartela: {CARTELA}*\n✅ Confirmado!\n\n{PALPITES}\n\n🏦 Pagamento via PIX\n🔑 Chave: {PIX}\n👤 Destinatário: {DESTINATARIO}\n\n💰 R$ 15,00\n⚠️ *Não pode alterar após pagamento*\n\nBoa sorte! 🍀'); setChargeMessageTemplate(settings?.chargeMessageTemplate || 'Olá {NOME},\n\nIdentificamos que o pagamento da sua cartela da {RODADA} ainda está pendente.\n\nValor: R$ {VALOR}\nCartela: {CARTELA}\n\nPor favor, conclua o pagamento para validar sua participação no ranking e na premiação. Obrigado! 🙏'); }} className="px-6 py-2 border rounded-lg inline-flex items-center gap-2"><RefreshCcw size={16} />Restaurar Padrões</button>
                     <button onClick={handleSaveWhatsAppMessage} className="px-6 py-2 bg-green-600 text-white rounded-lg">Salvar</button>
                   </div>
                 </div>
@@ -6301,11 +6311,15 @@ const UserPanel = ({ setView }) => {
         const settingsSnapshot = await getDocs(collection(db, 'settings'));
         let messageTemplate = '🏆 *BOLÃO BRASILEIRÃO 2025*\n\n📋 *{RODADA}*\n🎫 *Cartela: {CARTELA}*\n✅ Confirmado!\n\n{PALPITES}\n\n💰 R$ 15,00\n⚠️ *Não pode alterar após pagamento*\n\nBoa sorte! 🍀';
         
+        let pixKey = '';
+        let pixRecipientName = '';
         if (!settingsSnapshot.empty) {
           const settingsData = settingsSnapshot.docs[0].data();
           if (settingsData.whatsappMessage) {
             messageTemplate = settingsData.whatsappMessage;
           }
+          pixKey = (settingsData?.payment?.pixKey ?? settingsData?.pixKey ?? '').trim();
+          pixRecipientName = (settingsData?.payment?.pixRecipientName ?? settingsData?.pixRecipientName ?? '').trim();
         }
         
         console.log('✅ Enviando mensagem WhatsApp com template:', messageTemplate);
@@ -6316,7 +6330,9 @@ const UserPanel = ({ setView }) => {
           preds, 
           teams,
           messageTemplate,
-          cartelaCode
+          cartelaCode,
+          pixKey,
+          pixRecipientName
         );
       } catch (whatsappError) {
         console.error('❌ Erro ao enviar WhatsApp:', whatsappError);
