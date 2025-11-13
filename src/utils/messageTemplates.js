@@ -8,7 +8,8 @@ export const ALLOWED_TAGS = [
   'LIMITE',
   'DIVULGACAO',
   'RANKING_URL',
-  'BRAND'
+  'BRAND',
+  'PIX'
 ];
 
 // Template definitions (rich and plain)
@@ -18,8 +19,8 @@ export const MESSAGE_TEMPLATES = {
     plain: 'AVISO ({BRAND}): rodada "{RODADA}" aberta. Acesse {LINK} e registre seus palpites. Incentivo: participe!'
   },
   'charge-pending': {
-    rich: '⚠️ {BRAND} — Cobrança de palpites pendentes\n\nOlá, {NOME}. Conclua sua regularização até {LIMITE}.\nPagamento via PIX: 47415363000\n\nQualquer dúvida, estamos à disposição.',
-    plain: 'COBRANÇA ({BRAND}): regularize seus palpites até {LIMITE}. PIX: 47415363000. Obrigado.'
+    rich: '⚠️ {BRAND} — Cobrança de palpites pendentes\n\nOlá, {NOME}. Conclua sua regularização até {LIMITE}.\nPagamento via PIX: {PIX}\n\nQualquer dúvida, estamos à disposição.',
+    plain: 'COBRANÇA ({BRAND}): regularize seus palpites até {LIMITE}. PIX: {PIX}. Obrigado.'
   },
   'round-closed': {
     rich: '✅ {BRAND}\n\nRodada "{RODADA}" fechada! Obrigado pela participação de todos.\nBoa sorte! 🍀\nResultados serão divulgados em {DIVULGACAO}.',
@@ -63,7 +64,8 @@ export function compileTemplate(raw, context = {}) {
     LIMITE: context.LIMITE ?? context.deadline ?? '{LIMITE}',
     DIVULGACAO: context.DIVULGACAO ?? context.publish ?? '{DIVULGACAO}',
     RANKING_URL: context.RANKING_URL ?? context.ranking ?? '{RANKING_URL}',
-    BRAND: context.BRAND ?? context.brand ?? '{BRAND}'
+    BRAND: context.BRAND ?? context.brand ?? '{BRAND}',
+    PIX: context.PIX ?? context.pix ?? '{PIX}'
   };
   for (const tag of ALLOWED_TAGS) {
     const val = map[tag] ?? `{${tag}}`;

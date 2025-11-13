@@ -125,15 +125,9 @@ const initializeDatabase = async () => {
           typesLimitsText: ''
         },
         payment: {
-          provider: 'mercadopago',
-          useEnvCredentials: true,
-          mercadopago: { accessToken: '', webhookSecret: '', webhookUrl: '' },
-          methods: { pix: true, card: false },
-          transactionFeePercent: 0,
-          allowedIps: [],
-          signatureHeaderName: 'x-signature',
-          retries: 3,
-          timeoutMs: 10000
+          provider: 'pix_manual',
+          pixKey: '',
+          useEnvCredentials: false
         },
         termsOfUse: '',
         systemPolicies: '',
@@ -1275,6 +1269,20 @@ const AdminPanel = ({ setView }) => {
   const [paymentRetries, setPaymentRetries] = useState(settings?.payment?.retries || 3);
   const [paymentTimeoutMs, setPaymentTimeoutMs] = useState(settings?.payment?.timeoutMs || 10000);
   const [showAdvancedPayment, setShowAdvancedPayment] = useState(false);
+  // PIX (Manual)
+  const [pixKey, setPixKey] = useState(settings?.payment?.pixKey || '');
+  const [pixRecipientName, setPixRecipientName] = useState(settings?.payment?.pixRecipientName || settings?.pixRecipientName || '');
+  const validatePixKey = (key) => {
+    const k = (key || '').trim();
+    if (!k) return { valid: false, msg: 'Informe a chave PIX.' };
+    const isEmail = /\S+@\S+\.\S+/.test(k);
+    const digits = k.replace(/\D/g, '');
+    const isCpfCnpj = digits.length === 11 || digits.length === 14;
+    const isPhone = /^\+?\d{10,14}$/.test(k.replace(/\s/g, ''));
+    const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(k);
+    const valid = isEmail || isCpfCnpj || isPhone || isUuid;
+    return valid ? { valid: true } : { valid: false, msg: 'Formato de chave PIX inválido.' };
+  };
   const origin = typeof window !== 'undefined' ? window.location.origin : '';
   const mpWebhookUrl = origin ? `${origin}/api/payments/mercadopago/webhook` : '/api/payments/mercadopago/webhook';
   // Conexão Mercado Pago (OAuth)
@@ -1316,49 +1324,7 @@ const AdminPanel = ({ setView }) => {
     return () => { try { unsub(); } catch {} };
   }, [currentUser?.id]);
 
-  const connectMercadoPago = async () => {
-    try {
-      if (!currentUser?.id) { alert('Administrador não identificado.'); return; }
-      const apiBase = import.meta.env.VITE_API_BASE_URL || '';
-      const url = `${apiBase}/api/oauth/mp/start?adminId=${encodeURIComponent(currentUser.id)}`;
-      const r = await fetch(url, { method: 'GET' });
-      if (!r.ok) {
-        // Ambiente local (vite) não serve /api -> orientar uso do vercel dev
-        throw new Error('Endpoint /api indisponível no dev local. Use "npx vercel dev" ou teste no deploy.');
-      }
-      const j = await r.json();
-      const authUrl = j?.authorization_url || j?.url;
-      if (authUrl) {
-        window.open(authUrl, 'mp-oauth', 'width=800,height=700');
-      } else {
-        alert('Não foi possível iniciar a conexão com o Mercado Pago.');
-      }
-    } catch (e) {
-      alert('Erro ao conectar: ' + (e?.message || 'falha desconhecida'));
-    }
-  };
-
-  const disconnectMercadoPago = async () => {
-    try {
-      if (!currentUser?.id) { alert('Administrador não identificado.'); return; }
-      const apiBase = import.meta.env.VITE_API_BASE_URL || '';
-      const r = await fetch(`${apiBase}/api/oauth/mp/disconnect`, {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ adminId: currentUser.id })
-      });
-      if (!r.ok) {
-        throw new Error('Endpoint /api indisponível no dev local. Use "npx vercel dev" ou teste no deploy.');
-      }
-      const j = await r.json();
-      if (j?.ok) {
-        alert('Conta Mercado Pago desconectada.');
-      } else {
-        alert('Não foi possível desconectar.');
-      }
-    } catch (e) {
-      alert('Erro ao desconectar: ' + (e?.message || 'falha desconhecida'));
-    }
-  };
+  // (Removido: fluxo de conexão ao Mercado Pago)
   // Testes A/B
   const [abTestsEnabled, setAbTestsEnabled] = useState(settings?.abTests?.enabled ?? false);
   const [experimentDashboardPercent, setExperimentDashboardPercent] = useState(settings?.abTests?.experiments?.newDashboard || 0);
@@ -1553,6 +1519,20 @@ const AdminPanel = ({ setView }) => {
       
       for (const pred of cartelaPredictions) {
         await updatePrediction(pred.id, { paid: newPaidStatus });
+      }
+
+      try {
+        await addDoc(collection(db, 'admin_events'), {
+          adminId: currentUser?.id || null,
+          type: 'payment_status_changed',
+          targetUserId: userId,
+          roundId,
+          cartelaCode,
+          newStatus: newPaidStatus,
+          createdAt: serverTimestamp()
+        });
+      } catch (logErr) {
+        console.warn('Falha ao registrar log de pagamento:', logErr);
       }
     } catch (error) {
       alert('Erro ao atualizar pagamento: ' + error.message);
@@ -4102,89 +4082,30 @@ const AdminPanel = ({ setView }) => {
             {settingsTab === 'payment' && (
               <div className="space-y-6 max-w-3xl">
                 <div className="bg-white rounded-xl shadow-sm border p-6">
-                  <h3 className="text-lg font-bold mb-4">Pagamentos (Mercado Pago)</h3>
-                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+                  <h3 className="text-lg font-bold mb-4">Pagamentos via PIX (Manual)</h3>
+                  <p className="text-sm text-gray-600 mb-4">Fluxo manual: os pagamentos são feitos via PIX e a confirmação é realizada pelo administrador mediante comprovante.</p>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                     <div>
-                      <label className="block text-sm font-medium mb-2">Provedor</label>
-                      <select value={paymentProvider} onChange={(e) => setPaymentProvider(e.target.value)} className="w-full px-4 py-3 border rounded-lg">
-                        <option value="mercadopago">Mercado Pago</option>
-                      </select>
+                      <label className="block text-sm font-medium mb-2">Chave PIX</label>
+                      <input type="text" value={pixKey} onChange={(e) => setPixKey(e.target.value)} className="w-full px-4 py-3 border rounded-lg" placeholder="e-mail, CPF, CNPJ, telefone ou chave aleatória (EVP)" />
+                      {(() => { const v = validatePixKey(pixKey); return (!v.valid) ? (<p className="text-xs text-red-600 mt-1">{v.msg}</p>) : null; })()}
+                      <p className="text-xs text-gray-500 mt-2">Esta chave será exibida aos usuários com instruções de pagamento e solicitação de comprovante.</p>
+                      <label className="block text-sm font-medium mt-4 mb-2">Nome do recebedor (PIX)</label>
+                      <input type="text" value={pixRecipientName} onChange={(e) => setPixRecipientName(e.target.value)} className="w-full px-4 py-3 border rounded-lg" placeholder="Nome do titular da conta PIX" />
+                      <p className="text-xs text-gray-500 mt-2">Este nome é exibido para que o usuário confirme o destinatário correto ao pagar.</p>
                     </div>
-                    <div className="sm:col-span-2"></div>
-                  </div>
-                  {paymentProvider === 'mercadopago' && (
-                    <div className="mt-4 grid grid-cols-1 sm:grid-cols-2 gap-4">
-                      <div className="p-4 border rounded-lg bg-gray-50">
-                        <p className="text-sm font-medium mb-2">Status da Conexão</p>
-                        {mpConn.loading ? (
-                          <p className="text-gray-500">Carregando...</p>
-                        ) : mpConn.connected ? (
-                          <span className="inline-flex items-center gap-1 bg-green-100 text-green-700 px-3 py-1 rounded-full text-sm"><CheckCircle size={16} /> Conectado</span>
-                        ) : (
-                          <span className="inline-flex items-center gap-1 bg-red-100 text-red-700 px-3 py-1 rounded-full text-sm"><XCircle size={16} /> Desconectado</span>
-                        )}
-                        <div className="mt-3">
-                          <p className="text-sm font-medium">Conta Mercado Pago</p>
-                          <p className="text-gray-700">{mpConn.nickname || '—'} <span className="text-gray-500">{mpConn.email || ''}</span></p>
-                        </div>
-                        <div className="mt-3 flex gap-2">
-                          {!mpConn.connected ? (
-                            <button onClick={connectMercadoPago} className="px-4 py-2 bg-blue-600 text-white rounded-lg inline-flex items-center gap-2"><ExternalLink size={16} /> Conectar minha conta</button>
-                          ) : (
-                            <button onClick={disconnectMercadoPago} className="px-4 py-2 border rounded-lg inline-flex items-center gap-2"><LogOut size={16} /> Desconectar conta</button>
-                          )}
-                        </div>
-                        <p className="text-xs text-gray-500 mt-2">A conexão é 100% automática via OAuth. Nenhum token é exposto no front-end.</p>
-                      </div>
-                      <div className="p-4 border rounded-lg bg-gray-50">
-                        <p className="text-sm font-medium mb-2">Total recebido no mês</p>
-                        <p className="text-2xl font-bold text-green-700">R$ {monthlyTotal.toFixed(2)}</p>
-                        <div className="mt-4">
-                          <label className="block text-sm font-medium mb-2">Webhook URL</label>
-                          <div className="flex items-center gap-2">
-                            <input type="text" value={mpWebhookUrl} readOnly className="flex-1 px-4 py-3 border rounded-lg" />
-                            <button type="button" onClick={async () => { try { await navigator.clipboard.writeText(mpWebhookUrl); alert('URL copiada'); } catch {} }} className="px-3 py-2 border rounded-lg inline-flex items-center gap-2"><Copy size={16} />Copiar</button>
-                          </div>
-                          <p className="text-xs text-gray-600 mt-2">Cole esta URL no painel do Mercado Pago em Webhooks.</p>
-                        </div>
-                      </div>
-                    </div>
-                  )}
-
-                  <div className="mt-4 grid grid-cols-1 sm:grid-cols-3 gap-4">
-                    <label className="flex items-center gap-2"><input type="checkbox" checked={paymentPixEnabled} onChange={(e) => setPaymentPixEnabled(e.target.checked)} />Pix</label>
-                    <label className="flex items-center gap-2"><input type="checkbox" checked={paymentCardEnabled} onChange={(e) => setPaymentCardEnabled(e.target.checked)} />Cartão</label>
-                    <div>
-                      <label className="block text-sm font-medium mb-2">Taxa de Transação (%)</label>
-                      <input type="number" min="0" max="100" step="0.1" value={transactionFeePercent} onChange={(e) => setTransactionFeePercent(e.target.value)} className="w-full px-4 py-3 border rounded-lg" />
+                    <div className="p-4 border rounded-lg bg-gray-50">
+                      <p className="text-sm font-medium mb-2">Orientações</p>
+                      <ul className="text-sm text-gray-700 list-disc pl-5 space-y-1">
+                        <li>Usuário copia a chave PIX e realiza o pagamento.</li>
+                        <li>Usuário envia o comprovante por WhatsApp para o administrador.</li>
+                        <li>Administrador marca como Pago manualmente na tela de Participantes.</li>
+                      </ul>
                     </div>
                   </div>
-                  <div className="mt-4">
-                    <label className="block text-sm font-medium mb-2">IPs permitidos (Webhook/Callbacks)</label>
-                    <input type="text" value={paymentAllowedIps} onChange={(e) => setPaymentAllowedIps(e.target.value)} className="w-full px-4 py-3 border rounded-lg" placeholder="187.191.64.0/20, 10.0.0.2" />
-                  </div>
-                  <div className="mt-4">
-                    <button type="button" onClick={() => setShowAdvancedPayment(!showAdvancedPayment)} className="px-4 py-2 border rounded-lg">Configurações Avançadas</button>
-                  </div>
-                  {showAdvancedPayment && (
-                    <div className="mt-4 grid grid-cols-1 sm:grid-cols-3 gap-4">
-                      <div>
-                        <label className="block text-sm font-medium mb-2">Cabeçalho de Assinatura</label>
-                        <input type="text" value={signatureHeaderName} onChange={(e) => setSignatureHeaderName(e.target.value)} className="w-full px-4 py-3 border rounded-lg" placeholder="x-signature" />
-                      </div>
-                      <div>
-                        <label className="block text-sm font-medium mb-2">Tentativas</label>
-                        <input type="number" min="0" step="1" value={paymentRetries} onChange={(e) => setPaymentRetries(e.target.value)} className="w-full px-4 py-3 border rounded-lg" />
-                      </div>
-                      <div>
-                        <label className="block text-sm font-medium mb-2">Timeout (ms)</label>
-                        <input type="number" min="1000" step="100" value={paymentTimeoutMs} onChange={(e) => setPaymentTimeoutMs(e.target.value)} className="w-full px-4 py-3 border rounded-lg" />
-                      </div>
-                    </div>
-                  )}
                   <div className="flex sm:justify-end gap-3 mt-4">
-                    <button onClick={() => { setPaymentProvider('mercadopago'); setPaymentPixEnabled(true); setPaymentCardEnabled(false); setTransactionFeePercent(0); setPaymentAllowedIps(''); setSignatureHeaderName('x-signature'); setPaymentRetries(3); setPaymentTimeoutMs(10000); setShowAdvancedPayment(false); }} className="px-6 py-2 border rounded-lg inline-flex items-center gap-2"><RefreshCcw size={16} />Restaurar Padrões</button>
-                    <button onClick={handleSaveWhatsAppMessage} className="px-6 py-2 bg-green-600 text-white rounded-lg">Salvar</button>
+                    <button onClick={() => { setPixKey(''); setPixRecipientName(''); }} className="px-6 py-2 border rounded-lg inline-flex items-center gap-2"><RefreshCcw size={16} />Limpar</button>
+                    <button onClick={async () => { const v = validatePixKey(pixKey); if (!v.valid) { alert(v.msg); return; } try { await updateSettings({ payment: { provider: 'pix_manual', pixKey: pixKey.trim(), pixRecipientName: pixRecipientName.trim(), useEnvCredentials: false } }); try { await addDoc(collection(db, 'audit_logs'), { type: 'settings_update', keys: ['payment.pixKey','payment.pixRecipientName','payment.provider'], actorId: currentUser?.id || null, actorName: currentUser?.name || 'Admin', at: serverTimestamp() }); } catch {} alert('Configurações de pagamento atualizadas.'); } catch (e) { alert('Erro ao salvar configurações: ' + (e?.message || 'falha desconhecida')); } }} className="px-6 py-2 bg-green-600 text-white rounded-lg">Salvar</button>
                   </div>
                 </div>
 
@@ -5901,7 +5822,7 @@ const UserPanel = ({ setView }) => {
                 <div>
                   <h4 className="font-bold text-red-900 text-lg mb-2">⚠️ Atenção!</h4>
                   <p className="text-red-800 font-medium">Após confirmar, você <span className="underline">NÃO PODERÁ MAIS</span> alterar!</p>
-                  <p className="text-red-700 text-sm mt-2">💰 Lembre-se de efetuar o pagamento de R$ 15,00 para validar seus pontos.</p>
+                  <p className="text-red-700 text-sm mt-2">💰 Lembre-se de efetuar o pagamento de R$ {Number(settings?.betValue ?? 15).toFixed(2).replace('.', ',')} para validar seus pontos.</p>
                 </div>
               </div>
             </div>
@@ -6087,6 +6008,14 @@ const UserPanel = ({ setView }) => {
       }
     }, [open, stage]);
 
+    // Ao abrir, criar automaticamente as instruções e ir direto para a exibição
+    useEffect(() => {
+      if (!open) return;
+      if (stage !== 'collect') return;
+      // dispara criação das instruções sem exigir clique
+      handleCreate();
+    }, [open, stage]);
+
     // Monitora atualizações de pagamento no banco e muda para 'approved'
     useEffect(() => {
       if (!open) return;
@@ -6128,100 +6057,46 @@ const UserPanel = ({ setView }) => {
       try {
         setError(''); setStage('creating');
         try { if (typeof onStart === 'function') onStart(); } catch {}
-        // Determinar administrador conectado (prioriza admin logado; senão busca em 'admins')
-        let adminId = null;
-        if (currentUser?.isAdmin) {
-          adminId = currentUser.id;
-        }
-        if (!adminId) {
-          try {
-            const q = query(collection(db, 'admins'), where('mercado_pago_connected', '==', true));
-            const snap = await getDocs(q);
-            if (!snap.empty) adminId = snap.docs[0].id;
-          } catch {}
-        }
-        if (!adminId) {
+        const pixKey = (settings?.payment?.pixKey ?? settings?.pixKey ?? '').trim();
+        if (!pixKey) {
           setStage('error');
-          setError('Administrador não conectado ao Mercado Pago. Conecte em Configurações > Pagamentos.');
+          setError('Chave PIX não configurada. Procure o administrador.');
           return;
         }
-        const apiBase = import.meta.env.VITE_API_BASE_URL || '';
-        // Preferir PIX para checkout simples sem cadastro
-        const wantsPix = settings?.payment?.methods?.pix !== false; // default true
-        let created = null;
-        if (wantsPix) {
-          const res = await axios.post(`${apiBase}/api/payments/mercadopago/createPixPayment`, {
-            adminId,
+        setTx({ pixKey });
+        setStage('showing');
+        try {
+          await addDoc(collection(db, 'user_events'), {
             userId: currentUser?.id,
-            roundId: context?.roundId,
-            amount: context?.amount,
-            cartelaCodes: context?.cartelaCodes || [],
-            payer: { name: payer?.name }
+            type: 'pix_instructions_viewed',
+            roundId: context?.roundId || null,
+            amount: context?.amount || null,
+            createdAt: serverTimestamp()
           });
-          created = res.data;
-          setTx({ ...created });
-          setStage('showing');
-        } else {
-          const res = await axios.post(`${apiBase}/api/payments/mercadopago/createPreference`, {
-            adminId,
-            userId: currentUser?.id,
-            roundId: context?.roundId,
-            amount: context?.amount,
-            cartelaCodes: context?.cartelaCodes || [],
-            payer: { name: payer?.name, email: payer?.email }
-          });
-          created = res.data;
-          setTx({ ...created });
-          // Open checkout em nova aba (cartão)
-          if (created?.init_point) {
-            try { window.open(created.init_point, '_blank', 'noopener'); } catch {}
-          }
-          setStage('showing');
-        }
-        // start polling every 10s usando reconciliação
-        if (pollRef.current) clearInterval(pollRef.current);
-        pollRef.current = setInterval(async () => {
-          try {
-            const sres = await axios.get(`${apiBase}/api/payments/mercadopago/reconcile`, { params: { id: created.id } });
-            const status = sres.data?.status;
-            if (status === 'approved') {
-              setApprovedAt(new Date());
-              setStage('approved');
-              clearInterval(pollRef.current);
-              // Registrar evento no histórico do usuário
-              try {
-                await addDoc(collection(db, 'user_events'), {
-                  userId: currentUser?.id,
-                  type: 'payment_approved',
-                  transactionId: created.id,
-                  roundId: context?.roundId || null,
-                  amount: context?.amount || null,
-                  createdAt: serverTimestamp()
-                });
-              } catch {}
-              try { if (typeof onApproved === 'function') onApproved({ id: created.id }); } catch {}
-            } else if (status === 'rejected') {
-              setError('Pagamento rejeitado. Tente novamente.');
-              setStage('error');
-              clearInterval(pollRef.current);
-              try { if (typeof onError === 'function') onError(new Error('Pagamento rejeitado')); } catch {}
-            }
-          } catch {}
-        }, 10000);
+        } catch {}
       } catch (e) {
-        setError(e?.response?.data?.error || e.message || 'Falha ao criar pagamento');
+        setError(e?.message || 'Falha ao preparar instruções PIX');
         setStage('error');
         try { if (typeof onError === 'function') onError(e); } catch {}
       }
     };
 
     const handleCopy = async () => {
-      const text = tx?.pixCopiaECola || tx?.qrCode;
-      if (!text) return;
+      const key = (settings?.payment?.pixKey ?? settings?.pixKey ?? '').trim();
+      if (!key) return;
       try {
-        await navigator.clipboard.writeText(text);
+        await navigator.clipboard.writeText(key);
         setCopied('copiado');
         setTimeout(() => setCopied(''), 1500);
+        try {
+          await addDoc(collection(db, 'user_events'), {
+            userId: currentUser?.id,
+            type: 'pix_key_copied',
+            roundId: context?.roundId || null,
+            amount: context?.amount || null,
+            createdAt: serverTimestamp()
+          });
+        } catch {}
       } catch {
         setCopied('erro');
         setTimeout(() => setCopied(''), 1500);
@@ -6258,52 +6133,9 @@ const UserPanel = ({ setView }) => {
       }
     };
 
-    const sendReceiptWhatsApp = async () => {
-      const when = approvedAt || new Date();
-      const text = [
-        '✅ Pagamento confirmado!',
-        '',
-        `Rodada: ${context?.roundName || ''}`,
-        `Participações: ${context?.cartelaCodes?.length || 0}`,
-        `Valor pago: ${fmtBRL(context?.amount || 0)}`,
-        `Data/hora: ${formatDateTimeBR(when)}`,
-        `Transação: ${tx?.id || ''}`,
-        '',
-        'Obrigado pela participação! 🎉'
-      ].join('\n');
+    // Sem cópia de mensagem para WhatsApp; apenas exibição de chave e nome do recebedor
 
-      const number = normalizePhone(currentUser?.whatsapp || '');
-      const evo = settings?.devolution || {};
-      const apiBase = import.meta.env.VITE_API_BASE_URL || '';
-      try {
-        if (evo?.link && evo?.instanceName && evo?.token) {
-          await axios.post(`${apiBase}/api/evolution/sendText`, {
-            number: `55${number}`,
-            text,
-            link: evo.link,
-            instance: evo.instanceName,
-            token: evo.token
-          });
-          alert('✅ Comprovante enviado por WhatsApp.');
-        } else {
-          window.open(`https://wa.me/55${number}?text=${encodeURIComponent(text)}`, '_blank');
-        }
-        try {
-          await addDoc(collection(db, 'user_events'), {
-            userId: currentUser?.id,
-            type: 'payment_receipt_sent',
-            transactionId: tx?.id || null,
-            roundId: context?.roundId || null,
-            amount: context?.amount || null,
-            createdAt: serverTimestamp()
-          });
-        } catch {}
-      } catch (err) {
-        alert('Não foi possível enviar o comprovante no WhatsApp.');
-      }
-    };
-
-    const supportHref = `mailto:?subject=Erro%20Pagamento%20Checkout&body=Transacao:%20${encodeURIComponent(tx?.id || '')}%0ARodada:%20${encodeURIComponent(context?.roundId || '')}`;
+    const supportHref = `mailto:?subject=Suporte%20Pagamento%20PIX&body=Descreva%20o%20problema%20e%20informe%20rodada,%20valor%20e%20participações.`;
 
     if (!open) return null;
 
@@ -6321,30 +6153,16 @@ const UserPanel = ({ setView }) => {
           </div>
 
           {stage === 'collect' && (
-            <div className="p-4 space-y-3">
-              <div className="bg-blue-50 border border-blue-200 rounded-lg p-3">
-                <p className="text-sm text-blue-800">Rodada: <span className="font-semibold">{context?.roundName}</span></p>
-                <p className="text-sm text-blue-800">Participações: <span className="font-semibold">{context?.cartelaCodes?.length || 0}</span></p>
-                <p className="text-sm text-blue-800">Valor total: <span className="font-bold">{fmtBRL(context?.amount || 0)}</span></p>
-              </div>
-              {error && (
-                <div className="bg-red-50 border border-red-200 text-red-700 px-3 py-2 rounded">{error}</div>
-              )}
-              {/* PIX simples: sem necessidade de e-mail/conta */}
-              <div className="text-sm text-gray-700">
-                Pagamento via PIX com QR Code. Sem cadastro.
-              </div>
-              <div className="flex gap-3 pt-2">
-                <button onClick={handleCreate} className="flex-1 px-4 py-2 bg-green-600 text-white rounded-lg font-semibold hover:bg-green-700">Gerar QR Code PIX</button>
-                <button onClick={closeModal} className="px-4 py-2 border rounded-lg">Cancelar</button>
-              </div>
+            <div className="p-6 text-center space-y-3">
+              <Loader2 className="mx-auto animate-spin text-green-600" size={28} />
+              <p className="text-sm text-gray-700">Carregando instruções do PIX...</p>
             </div>
           )}
 
           {stage === 'creating' && (
             <div className="p-6 text-center space-y-3">
               <Loader2 className="mx-auto animate-spin text-green-600" size={28} />
-              <p className="text-sm text-gray-700">Gerando checkout...</p>
+              <p className="text-sm text-gray-700">Preparando instruções...</p>
             </div>
           )}
 
@@ -6352,40 +6170,48 @@ const UserPanel = ({ setView }) => {
             <div className="p-4 space-y-3">
               <div className="flex flex-col items-center gap-3">
                 <p className="text-xl font-bold text-green-700">{fmtBRL(context?.amount || 0)}</p>
-                {/* Exibir QR do PIX quando disponível */}
-                {tx?.qrCodeBase64 ? (
-                  <img src={`data:image/png;base64,${tx.qrCodeBase64}`} alt="QR Code PIX" className="w-48 h-48 sm:w-56 sm:h-56 border rounded-lg" />
-                ) : (
-                  <div className="text-sm text-gray-600">Gerando QR Code...</div>
-                )}
-                {/* Código copia e cola */}
-                {(tx?.pixCopiaECola || tx?.qrCode) && (
-                  <div className="w-full">
-                    <label className="block text-sm font-medium mb-1">Código PIX (copia e cola)</label>
-                    <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2">
-                      <input readOnly value={tx?.pixCopiaECola || tx?.qrCode || ''} className="w-full sm:flex-1 px-3 py-2 border rounded-lg text-xs" />
-                      <button onClick={handleCopy} className="w-full sm:w-auto px-3 py-2 bg-gray-800 text-white rounded">Copiar</button>
-                    </div>
-                    {copied === 'copiado' && (
-                      <div className="mt-1 text-xs text-green-700 flex items-center gap-1" aria-live="polite">
-                        <Check size={14} /> Código copiado!
-                      </div>
-                    )}
-                    {copied === 'erro' && (
-                      <div className="mt-1 text-xs text-red-700" aria-live="polite">
-                        Não foi possível copiar. Copie manualmente.
-                      </div>
-                    )}
+                <div className="w-full">
+                  <label className="block text-sm font-medium mb-1">Chave PIX (administrador)</label>
+                  <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2">
+        <input readOnly value={(settings?.payment?.pixKey ?? settings?.pixKey ?? '')} className="w-full sm:flex-1 px-3 py-2 border rounded-lg text-xs" />
+                    <button onClick={handleCopy} className="w-full sm:w-auto px-3 py-2 bg-gray-800 text-white rounded">Copiar chave</button>
                   </div>
-                )}
-                {/* Expiração */}
-                {tx?.expiration && (
-                  <p className="text-xs text-gray-600">Expira em {formatLeft()}</p>
-                )}
-                <div className="text-xs text-gray-600">Após pagar, verificaremos seu status automaticamente.</div>
+                  {(() => {
+                    const name = (settings?.payment?.pixRecipientName ?? settings?.pixRecipientName ?? '').trim();
+                    if (!name) return null;
+                    return (
+                      <div className="mt-2">
+                        <div className="bg-green-50 border border-green-200 rounded-lg p-3 flex items-center gap-2 text-sm">
+                          <CheckCircle className="text-green-600 flex-shrink-0" size={18} />
+                          <div>
+                            <p className="text-green-800 font-semibold leading-tight">Destinatário confirmado</p>
+                            <p className="text-green-900">{name}</p>
+                          </div>
+                        </div>
+                      </div>
+                    );
+                  })()}
+                  {copied === 'copiado' && (
+                    <div className="mt-1 text-xs text-green-700 flex items-center gap-1" aria-live="polite">
+                      <Check size={14} /> Chave copiada!
+                    </div>
+                  )}
+                  {copied === 'erro' && (
+                    <div className="mt-1 text-xs text-red-700" aria-live="polite">
+                      Não foi possível copiar. Copie manualmente.
+                    </div>
+                  )}
+                </div>
+                <div className="w-full text-sm text-gray-700 space-y-1">
+                  <p className="font-medium">Como pagar:</p>
+                  <p>1) Abra o app do seu banco e escolha pagar via PIX.</p>
+                  <p>2) Cole a chave acima e confirme o destinatário exibido.</p>
+                  <p>3) Informe o valor total e confirme a transação.</p>
+                  <p>4) Envie o comprovante ao administrador pelo WhatsApp.</p>
+                </div>
               </div>
-              <div className="flex justify-end gap-2 pt-2">
-                <button onClick={closeModal} className="px-4 py-2 border rounded">Fechar</button>
+              <div className="flex flex-col sm:flex-row justify-end gap-2 pt-2">
+                <button onClick={closeModal} className="w-full sm:w-auto px-4 py-2 border rounded">Fechar</button>
               </div>
             </div>
           )}
@@ -6417,11 +6243,11 @@ const UserPanel = ({ setView }) => {
             <div className="p-6 space-y-3">
               <div className="flex items-center gap-2 text-red-700">
                 <XCircle size={22} />
-                <p className="font-semibold">Falha ao processar pagamento</p>
+                <p className="font-semibold">Falha ao preparar instruções de pagamento</p>
               </div>
               {error && <div className="bg-red-50 border border-red-200 text-red-700 px-3 py-2 rounded">{error}</div>}
               <div className="flex items-center gap-2">
-                <button onClick={() => { setStage('collect'); setError(''); }} className="px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700">Tentar Novamente</button>
+                <button onClick={() => { setStage('collect'); setError(''); }} className="px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700">Tentar novamente</button>
                 <a href={supportHref} className="px-4 py-2 border rounded" target="_blank" rel="noopener noreferrer">Suporte</a>
               </div>
             </div>

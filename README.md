@@ -24,6 +24,23 @@ npm run build
 - Tailwind CSS
 - Lucide Icons
 
+## Pagamentos via PIX (Manual)
+- O fluxo de pagamento foi migrado para PIX manual, sem integrações externas.
+- Como configurar:
+  - Acesse "Configurações > Pagamentos" no painel administrativo.
+  - Informe a sua `chave PIX` (CPF/CNPJ, email, telefone ou chave aleatória).
+  - O provedor é `pix_manual` por padrão, não há OAuth.
+- Como funciona para o usuário:
+  - Ao clicar em pagar, o modal exibe a chave PIX e instruções.
+  - Botões disponíveis: `Copiar chave` e `Copiar mensagem para WhatsApp` (para enviar comprovante ao administrador).
+  - Não há QR Code nem verificação automática; a validação é feita pelo administrador.
+- Como funciona para o administrador:
+  - No painel, altere o status `pago/não pago` de uma cartela quando receber o comprovante.
+  - Cada alteração gera um log de auditoria em `admin_events` (com cartela, rodada, usuário e novo status).
+- Templates de mensagens:
+  - Os modelos aceitam a tag `{PIX}` para inserir a chave PIX dinâmica.
+  - Atualize os comunicados usando a seção de "Comunicados" conforme necessário.
+
 ## Comunicados – Consolidação de Modelos
 - A UI de "Comunicados" foi simplificada removendo a duplicação entre "Seleção rápida de modelos" (rádio) e "Modelos prontos".
 - Agora existe um único bloco de modelos com cartões clicáveis:
