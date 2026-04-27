@@ -5949,7 +5949,7 @@ const UserPanel = ({ setView }) => {
             })}
           </div>
           <div className="p-6 border-t flex gap-3 sticky bottom-0 bg-white">
-            <button onClick={() => { setSelectedRound(null); setEditingPredictions(null); setPendingPredictions(null); setSelectedEstablishment(null); }} className="px-6 py-2 border rounded-lg">Cancelar</button>
+            <button onClick={() => { setSelectedRound(null); setEditingPredictions(null); setPendingPredictions(null); }} className="px-6 py-2 border rounded-lg">Cancelar</button>
             <button onClick={handleSubmit} disabled={timedClosed} className={`px-6 py-2 rounded-lg ${timedClosed ? 'bg-gray-300 text-gray-600 cursor-not-allowed' : 'bg-green-600 text-white'}`}>Confirmar</button>
           </div>
         </div>
@@ -6500,7 +6500,6 @@ const UserPanel = ({ setView }) => {
       setPendingPredictions(null);
       setSelectedRound(null);
       setEditingPredictions(null);
-      setSelectedEstablishment(null);
       alert(`✅ Palpites confirmados!\n🎫 Cartela: ${cartelaCode}\n\nVerifique seu WhatsApp.\n\n⚠️ IMPORTANTE: Os pontos só serão computados após a confirmação do pagamento pelo administrador.`);
     } catch (error) {
       console.error('❌ Erro ao salvar palpites:', error);
