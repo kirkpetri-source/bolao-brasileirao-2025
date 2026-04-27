@@ -5940,23 +5940,29 @@ const UserPanel = ({ setView }) => {
                       <input 
                         type="number" 
                         min="0" 
-                        max="20" 
+                        max="9" 
                         value={localPreds[match.id]?.home ?? ''} 
-                        onChange={(e) => setLocalPreds({ ...localPreds, [match.id]: { ...localPreds[match.id], home: e.target.value } })} 
+                        onChange={(e) => {
+                          const val = e.target.value;
+                          if (val !== '' && (parseInt(val) < 0 || parseInt(val) > 9)) return;
+                          setLocalPreds({ ...localPreds, [match.id]: { ...localPreds[match.id], home: val } });
+                        }} 
                         disabled={timedClosed}
                         className="w-16 px-2 py-2 border rounded text-center font-bold" 
-                        placeholder="0" 
                       />
                       <span className="font-bold text-gray-400">X</span>
                       <input 
                         type="number" 
                         min="0" 
-                        max="20" 
+                        max="9" 
                         value={localPreds[match.id]?.away ?? ''} 
-                        onChange={(e) => setLocalPreds({ ...localPreds, [match.id]: { ...localPreds[match.id], away: e.target.value } })} 
+                        onChange={(e) => {
+                          const val = e.target.value;
+                          if (val !== '' && (parseInt(val) < 0 || parseInt(val) > 9)) return;
+                          setLocalPreds({ ...localPreds, [match.id]: { ...localPreds[match.id], away: val } });
+                        }} 
                         disabled={timedClosed}
                         className="w-16 px-2 py-2 border rounded text-center font-bold" 
-                        placeholder="0" 
                       />
                     </div>
                   </div>
