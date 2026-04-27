@@ -3146,11 +3146,27 @@ const AdminPanel = ({ setView }) => {
       ];
 
       let idx = 0;
-      participants.forEach((p) => {
+      
+      const participantsWithPoints = participants.map(p => {
+        let totalPts = 0;
+        matches.forEach(m => {
+          const pred = predictions.find(x => x.userId === p.userId && x.roundId === roundId && x.matchId === m.id && (x.cartelaCode || 'ANTIGA') === p.cartelaCode);
+          if (pred && m.finished && m.homeScore != null && m.awayScore != null) {
+            const ph = pred.homeScore ?? '-';
+            const pa = pred.awayScore ?? '-';
+            totalPts += scorePoints(ph, pa, m.homeScore, m.awayScore);
+          }
+        });
+        return { ...p, totalPts };
+      });
+
+      participantsWithPoints.sort((a, b) => b.totalPts - a.totalPts);
+
+      participantsWithPoints.forEach((p) => {
         const user = usersById.get(p.userId);
         if (!user) return;
 
-        const tableH = rowH * matches.length + tablePad * 2 + 12; // inclui header da tabela
+        const tableH = rowH * matches.length + tablePad * 2 + 12 + 8; // +8 espaço pro total
         const cardH = headerH + tableH;
         if (y + cardH > pageHeight - 16) { pdf.addPage(); y = drawHeader(); }
 
@@ -3209,6 +3225,13 @@ const AdminPanel = ({ setView }) => {
           });
           rowY += rowH;
         });
+
+        // Linha de Total
+        pdf.setFont(undefined, 'bold');
+        pdf.text('TOTAL:', margin + 8 + cols[0].w + cols[1].w + cols[2].w - 2, rowY + 2, { align: 'right' });
+        pdf.setTextColor(...primary);
+        pdf.text(String(p.totalPts), margin + 8 + cols[0].w + cols[1].w + cols[2].w + (cols[3].w/2), rowY + 2, { align: 'center' });
+        pdf.setTextColor(0,0,0);
 
         y += cardH + 8;
       });
