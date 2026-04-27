@@ -7,5 +7,10 @@ export default defineConfig({
   build: {
     outDir: 'dist',
     emptyOutDir: true
+  },
+  server: {
+    port: 5055,
+    host: true,
+    open: true
   }
 })

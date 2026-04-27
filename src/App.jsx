@@ -33,8 +33,8 @@ const fmtBRL = (n) => {
   try { return new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(Number(n)); } catch { return `R$ ${Number(n).toFixed(2)}`; }
 };
 
-// TIMES OFICIAIS DA SÉRIE A 2025 - CBF
-const SERIE_A_2025_TEAMS = [
+// TIMES OFICIAIS DA SÉRIE A 2026 - CBF
+const SERIE_A_2026_TEAMS = [
   { name: 'Palmeiras', logo: 'https://logodetimes.com/times/palmeiras/logo-palmeiras-256.png' },
   { name: 'Flamengo', logo: 'https://logodetimes.com/times/flamengo/logo-flamengo-256.png' },
   { name: 'Cruzeiro', logo: 'https://logodetimes.com/times/cruzeiro/logo-cruzeiro-256.png' },
@@ -70,31 +70,56 @@ const initializeDatabase = async () => {
     const teamsSnapshot = await getDocs(collection(db, 'teams'));
     const settingsSnapshot = await getDocs(collection(db, 'settings'));
     
+    // Se já há dados, não reinicializa
     if (!usersSnapshot.empty && !teamsSnapshot.empty) {
       console.log('✅ Database initialized');
       return;
     }
 
+    // Concurrency guard: usa um doc de lock para evitar inicializações simultâneas
+    const { doc: docRef, getDoc: getDocSnap, setDoc } = await import('firebase/firestore');
+    const lockRef = docRef(db, '_locks', 'init');
+    const lockSnap = await getDocSnap(lockRef);
+    if (lockSnap.exists()) {
+      const lockTime = lockSnap.data()?.timestamp?.toDate?.() || new Date(lockSnap.data()?.timestamp || 0);
+      // Se o lock tem menos de 60s, outro processo está inicializando
+      if (Date.now() - lockTime.getTime() < 60000) {
+        console.log('⏳ Another process is initializing, skipping...');
+        return;
+      }
+    }
+    await setDoc(lockRef, { timestamp: serverTimestamp() });
+
     console.log('🔄 Initializing...');
 
-    const initialUsers = [
-      { whatsapp: '11999999999', password: 'kirk5364', name: 'Administrador', isAdmin: true, balance: 0 },
-      { whatsapp: '11988888888', password: '123456', name: 'João Silva', isAdmin: false, balance: 150 },
-      { whatsapp: '11977777777', password: '123456', name: 'Maria Santos', isAdmin: false, balance: 200 }
-    ];
+    // Inicializa usuários apenas se a coleção estiver vazia
+    if (usersSnapshot.empty) {
+      const initialUsers = [
+        { whatsapp: '11999999999', password: 'kirk5364', name: 'Administrador', isAdmin: true, balance: 0 },
+        { whatsapp: '11988888888', password: '123456', name: 'João Silva', isAdmin: false, balance: 150 },
+        { whatsapp: '11977777777', password: '123456', name: 'Maria Santos', isAdmin: false, balance: 200 }
+      ];
 
-    for (const user of initialUsers) {
-      const hashed = await bcrypt.hash(user.password, 10);
-      await addDoc(collection(db, 'users'), { ...user, password: hashed, createdAt: serverTimestamp() });
+      for (const user of initialUsers) {
+        const hashed = await bcrypt.hash(user.password, 10);
+        await addDoc(collection(db, 'users'), { ...user, password: hashed, createdAt: serverTimestamp() });
+      }
     }
 
-    for (const team of SERIE_A_2025_TEAMS) {
-      await addDoc(collection(db, 'teams'), { ...team, createdAt: serverTimestamp() });
+    // Inicializa times apenas se a coleção estiver vazia, com verificação individual
+    if (teamsSnapshot.empty) {
+      // Re-checa logo antes de inserir (outra tab pode ter inserido entre o check e agora)
+      const freshTeams = await getDocs(collection(db, 'teams'));
+      if (freshTeams.empty) {
+        for (const team of SERIE_A_2026_TEAMS) {
+          await addDoc(collection(db, 'teams'), { ...team, createdAt: serverTimestamp() });
+        }
+      }
     }
 
     if (settingsSnapshot.empty) {
       await addDoc(collection(db, 'settings'), {
-        whatsappMessage: '🏆 *BOLÃO BRASILEIRÃO 2025*\n\n📋 *{RODADA}*\n🎫 *Cartela: {CARTELA}*\n✅ Confirmado!\n\n{PALPITES}\n\n🏦 Pagamento via PIX\n🔑 Chave: {PIX}\n👤 Destinatário: {DESTINATARIO}\n\n💰 R$ 15,00\n⚠️ *Não pode alterar após pagamento*\n\nBoa sorte! 🍀',
+        whatsappMessage: '🏆 *BOLÃO BRASILEIRÃO 2026*\n\n📋 *{RODADA}*\n🎫 *Cartela: {CARTELA}*\n✅ Confirmado!\n\n{PALPITES}\n\n🏦 Pagamento via PIX\n🔑 Chave: {PIX}\n👤 Destinatário: {DESTINATARIO}\n\n💰 R$ 15,00\n⚠️ *Não pode alterar após pagamento*\n\nBoa sorte! 🍀',
         chargeMessageTemplate: 'Olá {NOME},\n\nIdentificamos que o pagamento da sua cartela da {RODADA} ainda está pendente.\n\nValor: R$ {VALOR}\nCartela: {CARTELA}\n\nPor favor, conclua o pagamento para validar sua participação no ranking e na premiação. Obrigado! 🙏',
         devolution: {
           instanceName: '',
@@ -113,7 +138,7 @@ const initializeDatabase = async () => {
           notifyEnabled: true,
           notifyEvents: { charges: true, approvals: true, results: true },
           defaultTemplates: {
-            confirm: '🏆 *BOLÃO BRASILEIRÃO 2025*\n\n📋 *{RODADA}*\n🎫 *Cartela: {CARTELA}*\n✅ Confirmado!\n\n{PALPITES}\n\n🏦 Pagamento via PIX\n🔑 Chave: {PIX}\n👤 Destinatário: {DESTINATARIO}\n\n💰 R$ 15,00\n⚠️ *Não pode alterar após pagamento*\n\nBoa sorte! 🍀',
+            confirm: '🏆 *BOLÃO BRASILEIRÃO 2026*\n\n📋 *{RODADA}*\n🎫 *Cartela: {CARTELA}*\n✅ Confirmado!\n\n{PALPITES}\n\n🏦 Pagamento via PIX\n🔑 Chave: {PIX}\n👤 Destinatário: {DESTINATARIO}\n\n💰 R$ 15,00\n⚠️ *Não pode alterar após pagamento*\n\nBoa sorte! 🍀',
             charge: 'Olá {NOME},\n\nIdentificamos que o pagamento da sua cartela da {RODADA} ainda está pendente.\n\nValor: R$ {VALOR}\nCartela: {CARTELA}\n\nPor favor, conclua o pagamento para validar sua participação no ranking e na premiação. Obrigado! 🙏'
           }
         },
@@ -192,9 +217,9 @@ const AppProvider = ({ children }) => {
   const [loading, setLoading] = useState(true);
 
   // Sessão persistente com timeout de 10 min e renovação automática
-  const SESSION_KEY = 'bb2025.session';
+  const SESSION_KEY = 'bb2026.session';
   const SESSION_TIMEOUT_MS = 10 * 60 * 1000;
-  const SESSION_SECRET = import.meta.env?.VITE_SESSION_SECRET || 'bb-2025-local-secret';
+  const SESSION_SECRET = import.meta.env?.VITE_SESSION_SECRET || 'bb-2026-local-secret';
 
   const textEncoder = new TextEncoder();
   const toHex = (buf) => Array.from(new Uint8Array(buf)).map(b => b.toString(16).padStart(2, '0')).join('');
@@ -367,7 +392,19 @@ const AppProvider = ({ children }) => {
     currentUser, setCurrentUser, users, teams, rounds, predictions, establishments, settings, communications, teamImportRequests, loading,
     login, logout,
     addUser: async (d) => {
-      const toSave = { ...d };
+      const normalizeWhatsapp = (s) => {
+        const str = (s || '').replace(/\D/g, '');
+        return str.length > 11 ? str.slice(-11) : str;
+      };
+      const phone = normalizeWhatsapp(d.whatsapp);
+      
+      const usersSnap = await getDocs(collection(db, 'users'));
+      const exists = usersSnap.docs.some(doc => normalizeWhatsapp(doc.data().whatsapp) === phone);
+      if (exists) {
+        throw new Error('WhatsApp já cadastrado!');
+      }
+
+      const toSave = { ...d, whatsapp: phone };
       if (toSave.password) {
         toSave.password = await bcrypt.hash(toSave.password, 10);
       }
@@ -417,13 +454,13 @@ const AppProvider = ({ children }) => {
         await deleteDoc(doc.ref);
       }
     },
-    resetTeamsToSerieA2025: async () => {
+    resetTeamsToSerieA2026: async () => {
       requireAdmin();
       const snapshot = await getDocs(collection(db, 'teams'));
       for (const doc of snapshot.docs) {
         await deleteDoc(doc.ref);
       }
-      for (const team of SERIE_A_2025_TEAMS) {
+      for (const team of SERIE_A_2026_TEAMS) {
         await addDoc(collection(db, 'teams'), { ...team, createdAt: serverTimestamp() });
       }
     },
@@ -639,13 +676,13 @@ const RulesCard = () => {
 };
 
 const LoginScreen = ({ setView }) => {
-  const { users, login, addUser, updateUser, settings } = useApp();
+  const { users, login, addUser, updateUser, settings, establishments } = useApp();
   const [whatsapp, setWhatsapp] = useState('');
   const [password, setPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
   const [error, setError] = useState('');
   const [showRegister, setShowRegister] = useState(false);
-  const [reg, setReg] = useState({ name: '', whatsapp: '', password: '', confirmPassword: '' });
+  const [reg, setReg] = useState({ name: '', whatsapp: '', password: '', confirmPassword: '', establishmentId: '' });
   const [showRulesModal, setShowRulesModal] = useState(false);
 
   const normalizeWhatsapp = (s) => {
@@ -717,11 +754,11 @@ const LoginScreen = ({ setView }) => {
     const phone = normalizeWhatsapp(reg.whatsapp);
     if (users.find(u => normalizeWhatsapp(u.whatsapp) === phone)) return setError('WhatsApp já cadastrado!');
     try {
-      await addUser({ name: reg.name, whatsapp: phone, password: reg.password, isAdmin: false, balance: 0 });
+      await addUser({ name: reg.name, whatsapp: phone, password: reg.password, isAdmin: false, balance: 0, establishmentId: reg.establishmentId || null });
       alert('✅ Cadastrado!');
       setShowRegister(false);
       setWhatsapp(phone);
-      setReg({ name: '', whatsapp: '', password: '', confirmPassword: '' });
+      setReg({ name: '', whatsapp: '', password: '', confirmPassword: '', establishmentId: '' });
       setError('');
     } catch (e) {
       setError('Erro: ' + e.message);
@@ -755,6 +792,17 @@ const LoginScreen = ({ setView }) => {
                 <label className="block text-sm font-medium mb-2">Confirmar</label>
                 <input type="password" placeholder="Digite novamente" value={reg.confirmPassword} onChange={(e) => setReg({ ...reg, confirmPassword: e.target.value })} className="w-full px-4 py-3 border rounded-lg" />
               </div>
+              {establishments.length > 0 && (
+                <div>
+                  <label className="block text-sm font-medium mb-2">Estabelecimento</label>
+                  <select value={reg.establishmentId} onChange={(e) => setReg({ ...reg, establishmentId: e.target.value })} className="w-full px-4 py-3 border rounded-lg bg-white">
+                    <option value="">Nenhum (participação direta)</option>
+                    {establishments.map(est => (
+                      <option key={est.id} value={est.id}>{est.name}</option>
+                    ))}
+                  </select>
+                </div>
+              )}
               <button onClick={handleRegister} className="w-full bg-green-600 text-white py-3 rounded-lg font-semibold">Criar</button>
               <button onClick={() => { setShowRegister(false); setError(''); }} className="w-full border-2 text-gray-700 py-3 rounded-lg font-semibold">Já tenho</button>
               <button onClick={() => setShowRulesModal(true)} className="w-full bg-green-50 text-green-700 border-2 border-green-600 py-3 rounded-lg font-semibold flex items-center justify-center gap-2 hover:bg-green-100 focus:outline-none focus:ring-2 focus:ring-green-500 shadow-sm">
@@ -795,7 +843,7 @@ const LoginScreen = ({ setView }) => {
               <Trophy className="w-12 h-12 text-white" />
             </div>
             <h1 className="text-3xl font-bold">Bolão Brasileirão</h1>
-            <p className="text-gray-600 mt-2">2025 - Série A</p>
+            <p className="text-gray-600 mt-2">2026 - Série A</p>
           </div>
           {error && <div className="bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded-lg mb-4">{error}</div>}
           <div className="space-y-4">
@@ -1218,11 +1266,11 @@ const PasswordModal = ({ user, onSave, onCancel }) => {
 };
 
 const AdminPanel = ({ setView }) => {
-  const { currentUser, setCurrentUser, logout, teams, rounds, users, predictions, establishments, settings, communications, addRound, updateRound, deleteRound, addTeam, updateTeam, deleteTeam, updateUser, deleteUser, resetTeamsToSerieA2025, updatePrediction, updateSettings, addEstablishment, updateEstablishment, deleteEstablishment, addCommunication, updateCommunication, teamImportRequests, submitImportRequestsFromApi, approveImportRequest, rejectImportRequest } = useApp();
+  const { currentUser, setCurrentUser, logout, teams, rounds, users, predictions, establishments, settings, communications, addRound, updateRound, deleteRound, addTeam, updateTeam, deleteTeam, updateUser, deleteUser, resetTeamsToSerieA2026, updatePrediction, updateSettings, addEstablishment, updateEstablishment, deleteEstablishment, addCommunication, updateCommunication, teamImportRequests, submitImportRequestsFromApi, approveImportRequest, rejectImportRequest } = useApp();
   
   console.log('AdminPanel - Settings:', settings);
   
-  const [activeTab, setActiveTab] = useState('dashboard');
+  const [activeTab, setActiveTab] = useState('financial');
   const [editingRound, setEditingRound] = useState(null);
   const [editingTeam, setEditingTeam] = useState(null);
   const [editingEstablishment, setEditingEstablishment] = useState(null);
@@ -1441,7 +1489,7 @@ const AdminPanel = ({ setView }) => {
       setWhatsappMessage(settings.whatsappMessage);
     } else if (settings && !settings.whatsappMessage) {
       console.log('Usando mensagem padrão');
-      setWhatsappMessage('🏆 *BOLÃO BRASILEIRÃO 2025*\n\n📋 *{RODADA}*\n🎫 *Cartela: {CARTELA}*\n✅ Confirmado!\n\n{PALPITES}\n\n🏦 Pagamento via PIX\n🔑 Chave: {PIX}\n👤 Destinatário: {DESTINATARIO}\n\n💰 R$ 15,00\n⚠️ *Não pode alterar após pagamento*\n\nBoa sorte! 🍀');
+      setWhatsappMessage('🏆 *BOLÃO BRASILEIRÃO 2026*\n\n📋 *{RODADA}*\n🎫 *Cartela: {CARTELA}*\n✅ Confirmado!\n\n{PALPITES}\n\n🏦 Pagamento via PIX\n🔑 Chave: {PIX}\n👤 Destinatário: {DESTINATARIO}\n\n💰 R$ 15,00\n⚠️ *Não pode alterar após pagamento*\n\nBoa sorte! 🍀');
     }
 
     // Bet value
@@ -2103,7 +2151,7 @@ const AdminPanel = ({ setView }) => {
     }
   };
 
-  const getBrandName = () => (settings?.brandName || 'Bolão Brasileiro 2025');
+  const getBrandName = () => (settings?.brandName || 'Bolão Brasileiro 2026');
 
   // Formata datas vindas como string ISO ou Firestore Timestamp
   const formatPtBrFlexible = (value) => {
@@ -2352,7 +2400,7 @@ const AdminPanel = ({ setView }) => {
       };
 
       // Metadados
-      try { pdf.setProperties && pdf.setProperties({ title: `Top 5 — ${round.name}`, subject: 'Ranking da Rodada', author: 'Bolão Brasileirão 2025' }); } catch (_) {}
+      try { pdf.setProperties && pdf.setProperties({ title: `Top 5 — ${round.name}`, subject: 'Ranking da Rodada', author: 'Bolão Brasileirão 2026' }); } catch (_) {}
 
       // Cabeçalho
       const drawHeader = () => {
@@ -2361,7 +2409,7 @@ const AdminPanel = ({ setView }) => {
         pdf.setTextColor(255, 255, 255);
         pdf.setFontSize(14);
         pdf.setFont(undefined, 'bold');
-        pdf.text('TOP 5 — BOLÃO BRASILEIRÃO 2025', margin, 11);
+        pdf.text('TOP 5 — BOLÃO BRASILEIRÃO 2026', margin, 11);
         pdf.setFontSize(11);
         pdf.setFont(undefined, 'normal');
         pdf.text(round.name, margin, 19);
@@ -2496,7 +2544,7 @@ const AdminPanel = ({ setView }) => {
       // Rodapé
       pdf.setFontSize(8);
       pdf.setTextColor(...gray700);
-      pdf.text('Relatório Top 5 — Bolão Brasileirão 2025', margin, pageHeight - 8);
+      pdf.text('Relatório Top 5 — Bolão Brasileirão 2026', margin, pageHeight - 8);
 
       pdf.save(`Top5_${round.name.replace(/\s+/g, '_')}.pdf`);
     } catch (err) {
@@ -2546,7 +2594,7 @@ const AdminPanel = ({ setView }) => {
       const border = [229, 231, 235];
 
       // Metadados
-      try { pdf.setProperties && pdf.setProperties({ title: `Bolão - ${round.name}`, subject: 'Cartelas confirmadas', author: 'Bolão Brasileirão 2025' }); } catch (_) {}
+      try { pdf.setProperties && pdf.setProperties({ title: `Bolão - ${round.name}`, subject: 'Cartelas confirmadas', author: 'Bolão Brasileirão 2026' }); } catch (_) {}
 
       const drawPageHeader = () => {
         pdf.setFillColor(...primary);
@@ -2554,7 +2602,7 @@ const AdminPanel = ({ setView }) => {
         pdf.setTextColor(255, 255, 255);
         pdf.setFontSize(14);
         pdf.setFont(undefined, 'bold');
-        pdf.text('BOLÃO BRASILEIRÃO 2025', margin, 10);
+        pdf.text('BOLÃO BRASILEIRÃO 2026', margin, 10);
         pdf.setFontSize(11);
         pdf.text(round.name, margin, 18);
         pdf.setFontSize(9);
@@ -3031,7 +3079,7 @@ const AdminPanel = ({ setView }) => {
         pdf.setProperties({
           title: `Relatório Rodada ${round.name}`,
           subject: 'Comprovante oficial da rodada',
-          author: 'Bolão Brasileirão 2025',
+          author: 'Bolão Brasileirão 2026',
           keywords: 'bolão, brasileirão, relatório, rodada, pdf',
           creator: 'Bolão App'
         });
@@ -3043,7 +3091,7 @@ const AdminPanel = ({ setView }) => {
         pdf.setTextColor(255, 255, 255);
         pdf.setFont(undefined, 'bold');
         pdf.setFontSize(14);
-        pdf.text('BOLÃO BRASILEIRÃO 2025', margin, 11);
+        pdf.text('BOLÃO BRASILEIRÃO 2026', margin, 11);
         pdf.setFont(undefined, 'normal');
         pdf.setFontSize(11);
         pdf.text(`Relatório da ${round.name}`, margin, 19);
@@ -3167,12 +3215,12 @@ const AdminPanel = ({ setView }) => {
   };
 
   const handleResetTeams = async () => {
-    if (!confirm('⚠️ ATENÇÃO!\n\nIsso irá DELETAR todos os times cadastrados e recarregar apenas os 20 times oficiais da Série A 2025.\n\n⚠️ CUIDADO: Se houver rodadas criadas com times antigos, elas podem ficar quebradas!\n\nDeseja continuar?')) {
+    if (!confirm('⚠️ ATENÇÃO!\n\nIsso irá DELETAR todos os times cadastrados e recarregar apenas os 20 times oficiais da Série A 2026.\n\n⚠️ CUIDADO: Se houver rodadas criadas com times antigos, elas podem ficar quebradas!\n\nDeseja continuar?')) {
       return;
     }
     try {
-      await resetTeamsToSerieA2025();
-      alert('✅ Times resetados com sucesso!\n\n20 times oficiais da Série A 2025 foram carregados.');
+      await resetTeamsToSerieA2026();
+      alert('✅ Times resetados com sucesso!\n\n20 times oficiais da Série A 2026 foram carregados.');
     } catch (error) {
       alert('❌ Erro ao resetar times: ' + error.message);
     }
@@ -3180,14 +3228,12 @@ const AdminPanel = ({ setView }) => {
 
   // Corrige times duplicados por nome e relinca rodadas para o ID canônico
   const handleFixTeamsDuplicates = async () => {
-    if (!confirm('🔧 Esta ação vai unificar times com o mesmo nome e atualizar todas as rodadas para apontarem ao time canônico.\n\nÉ recomendado fazer backup antes. Deseja continuar?')) {
-      return;
-    }
     try {
       // Buscar todos os times
       const teamsSnap = await getDocs(collection(db, 'teams'));
       const allTeams = teamsSnap.docs.map(d => ({ id: d.id, ...d.data() }));
 
+      // Agrupar por nome normalizado
       const normalizeName = (s) => s?.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().trim();
       const groups = {};
       allTeams.forEach(t => {
@@ -3196,33 +3242,68 @@ const AdminPanel = ({ setView }) => {
         groups[key].push(t);
       });
 
-      const idMap = {}; // id duplicado => id canônico
-      const toDelete = [];
-      Object.values(groups).forEach(group => {
-        if (group.length > 1) {
-          const canonical = group[0];
-          group.slice(1).forEach(dup => {
-            idMap[dup.id] = canonical.id;
-            toDelete.push(dup.id);
-          });
-        }
-      });
+      // Identificar apenas os grupos com duplicatas (length > 1)
+      // Times que aparecem só 1 vez NÃO são tocados
+      const duplicateGroups = Object.entries(groups).filter(([, group]) => group.length > 1);
 
-      if (Object.keys(idMap).length === 0) {
-        alert('✅ Nenhuma duplicação encontrada por nome.');
+      if (duplicateGroups.length === 0) {
+        alert('✅ Nenhuma duplicação encontrada. Todos os times são únicos.');
         return;
       }
 
-      // Atualizar todas as rodadas substituindo IDs duplicados pelo canônico
+      // Buscar rodadas para saber quais times estão vinculados
       const roundsSnap = await getDocs(collection(db, 'rounds'));
+      const linkedTeamIds = new Set();
+      for (const rd of roundsSnap.docs) {
+        const matches = Array.isArray(rd.data().matches) ? rd.data().matches : [];
+        matches.forEach(m => {
+          if (m.homeTeamId) linkedTeamIds.add(m.homeTeamId);
+          if (m.awayTeamId) linkedTeamIds.add(m.awayTeamId);
+        });
+      }
+
+      // Para cada grupo duplicado, escolher o canônico (prioriza o que está vinculado a rodadas)
+      const idMap = {}; // id duplicado => id canônico
+      const toDelete = [];
+      let preview = '';
+
+      duplicateGroups.forEach(([, group]) => {
+        // Priorizar: 1) vinculado a rodadas, 2) primeiro criado
+        const sorted = [...group].sort((a, b) => {
+          const aLinked = linkedTeamIds.has(a.id) ? 1 : 0;
+          const bLinked = linkedTeamIds.has(b.id) ? 1 : 0;
+          if (bLinked !== aLinked) return bLinked - aLinked;
+          return 0; // manter ordem original
+        });
+        const canonical = sorted[0];
+        const duplicates = sorted.slice(1);
+        preview += `• "${canonical.name}" — mantém 1, remove ${duplicates.length} duplicata(s)\n`;
+        duplicates.forEach(dup => {
+          idMap[dup.id] = canonical.id;
+          toDelete.push(dup.id);
+        });
+      });
+
+      const uniqueCount = Object.values(groups).filter(g => g.length === 1).length;
+      const confirmMsg = `🔧 Correção de Duplicados\n\n` +
+        `Times únicos (não serão alterados): ${uniqueCount}\n` +
+        `Times duplicados encontrados: ${toDelete.length}\n` +
+        `Grupos com duplicatas: ${duplicateGroups.length}\n\n` +
+        `Detalhes:\n${preview}\n` +
+        `Após a correção, restará ${allTeams.length - toDelete.length} times.\n\n` +
+        `Deseja continuar?`;
+
+      if (!confirm(confirmMsg)) return;
+
+      // Atualizar rodadas substituindo IDs duplicados pelo canônico
       let roundsChanged = 0;
       for (const rd of roundsSnap.docs) {
         const data = rd.data();
         const matches = Array.isArray(data.matches) ? data.matches : [];
         let changed = false;
         const updatedMatches = matches.map(m => {
-          const home = idMap[m.homeTeamId] ? idMap[m.homeTeamId] : m.homeTeamId;
-          const away = idMap[m.awayTeamId] ? idMap[m.awayTeamId] : m.awayTeamId;
+          const home = idMap[m.homeTeamId] || m.homeTeamId;
+          const away = idMap[m.awayTeamId] || m.awayTeamId;
           if (home !== m.homeTeamId || away !== m.awayTeamId) changed = true;
           return { ...m, homeTeamId: home, awayTeamId: away };
         });
@@ -3232,15 +3313,115 @@ const AdminPanel = ({ setView }) => {
         }
       }
 
-      // Remover times duplicados
+      // Atualizar predictions que referenciam times duplicados (matchId pode conter teamId)
+      // Não é necessário pois predictions referenciam matchId, não teamId diretamente
+
+      // Remover apenas os times duplicados
       for (const id of toDelete) {
         await deleteDoc(doc(db, 'teams', id));
       }
 
-      alert(`✅ Correção concluída!\nTimes unificados: ${toDelete.length}\nRodadas atualizadas: ${roundsChanged}`);
+      alert(`✅ Correção concluída!\n\nDuplicatas removidas: ${toDelete.length}\nRodadas atualizadas: ${roundsChanged}\nTimes restantes: ${allTeams.length - toDelete.length}\nTimes únicos preservados: ${uniqueCount}`);
     } catch (error) {
       console.error('Erro ao corrigir duplicados:', error);
       alert('❌ Erro ao corrigir duplicados: ' + error.message);
+    }
+  };
+
+  const handleFixUserDuplicates = async () => {
+    try {
+      const usersSnap = await getDocs(collection(db, 'users'));
+      const allUsers = usersSnap.docs.map(d => ({ id: d.id, ...d.data() }));
+
+      const normalizeWhatsapp = (s) => {
+        const d = (s || '').replace(/\D/g, '');
+        return d.length > 11 ? d.slice(-11) : d;
+      };
+
+      const groups = {};
+      allUsers.forEach(u => {
+        if (u.isAdmin) return; // Não mexe nos admins
+        const key = normalizeWhatsapp(u.whatsapp);
+        if (!key) return; // Ignora se não tiver número válido
+        if (!groups[key]) groups[key] = [];
+        groups[key].push(u);
+      });
+
+      const duplicateGroups = Object.entries(groups).filter(([, group]) => group.length > 1);
+
+      if (duplicateGroups.length === 0) {
+        alert('✅ Nenhuma duplicação de usuário encontrada.');
+        return;
+      }
+
+      // Conta palpites por usuário para priorizar
+      const predsSnap = await getDocs(collection(db, 'predictions'));
+      const userPredCount = {};
+      predsSnap.docs.forEach(p => {
+        const uid = p.data().userId;
+        if (uid) userPredCount[uid] = (userPredCount[uid] || 0) + 1;
+      });
+
+      const idMap = {}; // id duplicado => id canônico
+      const toDelete = [];
+      let preview = '';
+
+      duplicateGroups.forEach(([phone, group]) => {
+        // Prioriza: 1) Mais palpites, 2) Maior saldo, 3) Mais antigo
+        const sorted = [...group].sort((a, b) => {
+          const predsA = userPredCount[a.id] || 0;
+          const predsB = userPredCount[b.id] || 0;
+          if (predsB !== predsA) return predsB - predsA;
+          
+          const balA = a.balance || 0;
+          const balB = b.balance || 0;
+          if (balB !== balA) return balB - balA;
+          
+          const tA = a.createdAt?.toDate?.()?.getTime() || 0;
+          const tB = b.createdAt?.toDate?.()?.getTime() || 0;
+          return tA - tB;
+        });
+
+        const canonical = sorted[0];
+        const duplicates = sorted.slice(1);
+        preview += `• ${canonical.name} (${phone}) — mantém 1, remove ${duplicates.length}\n`;
+        
+        duplicates.forEach(dup => {
+          idMap[dup.id] = canonical.id;
+          toDelete.push(dup.id);
+        });
+      });
+
+      const uniqueCount = Object.values(groups).filter(g => g.length === 1).length;
+      const confirmMsg = `👥 Correção de Usuários Duplicados\n\n` +
+        `Usuários únicos (não serão alterados): ${uniqueCount}\n` +
+        `Usuários duplicados encontrados: ${toDelete.length}\n` +
+        `Grupos com duplicatas: ${duplicateGroups.length}\n\n` +
+        `Detalhes:\n${preview}\n` +
+        `Os palpites serão transferidos para o perfil principal antes da exclusão.\n\n` +
+        `Deseja continuar?`;
+
+      if (!confirm(confirmMsg)) return;
+
+      // Transferir palpites
+      let predsChanged = 0;
+      for (const p of predsSnap.docs) {
+        const data = p.data();
+        if (idMap[data.userId]) {
+          await updateDoc(doc(db, 'predictions', p.id), { userId: idMap[data.userId] });
+          predsChanged++;
+        }
+      }
+
+      // Remover duplicados
+      for (const id of toDelete) {
+        await deleteDoc(doc(db, 'users', id));
+      }
+
+      alert(`✅ Correção concluída!\n\nDuplicatas removidas: ${toDelete.length}\nPalpites transferidos: ${predsChanged}\nUsuários restantes: ${allUsers.length - toDelete.length}`);
+    } catch (error) {
+      console.error('Erro ao corrigir usuários duplicados:', error);
+      alert('❌ Erro: ' + error.message);
     }
   };
 
@@ -3438,7 +3619,7 @@ const AdminPanel = ({ setView }) => {
             <Trophy size={32} />
             <div>
               <h1 className="text-xl sm:text-2xl font-bold">Painel Administrativo</h1>
-              <p className="text-green-100 text-xs sm:text-sm">Bolão Brasileirão 2025</p>
+              <p className="text-green-100 text-xs sm:text-sm">Bolão Brasileirão 2026</p>
             </div>
           </div>
           <button onClick={() => { logout(); setView('login'); }} className="w-full sm:w-auto justify-center flex items-center gap-2 bg-green-700 px-3 py-2 rounded-lg text-sm">
@@ -3927,7 +4108,7 @@ const AdminPanel = ({ setView }) => {
                     <textarea value={chargeMessageTemplate} onChange={(e) => setChargeMessageTemplate(e.target.value)} className="w-full px-4 py-3 border rounded-lg font-mono text-sm" rows="6" />
                   </div>
                   <div className="flex sm:justify-end gap-3 mt-4">
-                    <button onClick={() => { setWhatsappApiToken(''); setWhatsappNumber(''); setDevolutionLink(''); setDevolutionInstance(''); setDevolutionToken(''); setWhatsappNotifyEnabled(true); setWhatsappNotifyEvents({ charges: true, approvals: true, results: true }); setWhatsappMessage(settings?.whatsappMessage || '🏆 *BOLÃO BRASILEIRÃO 2025*\n\n📋 *{RODADA}*\n🎫 *Cartela: {CARTELA}*\n✅ Confirmado!\n\n{PALPITES}\n\n🏦 Pagamento via PIX\n🔑 Chave: {PIX}\n👤 Destinatário: {DESTINATARIO}\n\n💰 R$ 15,00\n⚠️ *Não pode alterar após pagamento*\n\nBoa sorte! 🍀'); setChargeMessageTemplate(settings?.chargeMessageTemplate || 'Olá {NOME},\n\nIdentificamos que o pagamento da sua cartela da {RODADA} ainda está pendente.\n\nValor: R$ {VALOR}\nCartela: {CARTELA}\n\nPor favor, conclua o pagamento para validar sua participação no ranking e na premiação. Obrigado! 🙏'); }} className="px-6 py-2 border rounded-lg inline-flex items-center gap-2"><RefreshCcw size={16} />Restaurar Padrões</button>
+                    <button onClick={() => { setWhatsappApiToken(''); setWhatsappNumber(''); setDevolutionLink(''); setDevolutionInstance(''); setDevolutionToken(''); setWhatsappNotifyEnabled(true); setWhatsappNotifyEvents({ charges: true, approvals: true, results: true }); setWhatsappMessage(settings?.whatsappMessage || '🏆 *BOLÃO BRASILEIRÃO 2026*\n\n📋 *{RODADA}*\n🎫 *Cartela: {CARTELA}*\n✅ Confirmado!\n\n{PALPITES}\n\n🏦 Pagamento via PIX\n🔑 Chave: {PIX}\n👤 Destinatário: {DESTINATARIO}\n\n💰 R$ 15,00\n⚠️ *Não pode alterar após pagamento*\n\nBoa sorte! 🍀'); setChargeMessageTemplate(settings?.chargeMessageTemplate || 'Olá {NOME},\n\nIdentificamos que o pagamento da sua cartela da {RODADA} ainda está pendente.\n\nValor: R$ {VALOR}\nCartela: {CARTELA}\n\nPor favor, conclua o pagamento para validar sua participação no ranking e na premiação. Obrigado! 🙏'); }} className="px-6 py-2 border rounded-lg inline-flex items-center gap-2"><RefreshCcw size={16} />Restaurar Padrões</button>
                     <button onClick={handleSaveWhatsAppMessage} className="px-6 py-2 bg-green-600 text-white rounded-lg">Salvar</button>
                   </div>
                 </div>
@@ -4323,7 +4504,12 @@ const AdminPanel = ({ setView }) => {
 
         {activeTab === 'participants' && (
           <div>
-            <h2 className="text-2xl font-bold mb-6">Participantes</h2>
+            <div className="flex flex-col sm:flex-row sm:justify-between sm:items-center gap-3 mb-6">
+              <h2 className="text-2xl font-bold">Participantes</h2>
+              <button onClick={handleFixUserDuplicates} className="flex items-center gap-2 bg-blue-600 text-white px-4 py-2 rounded-lg hover:bg-blue-700 transition text-sm sm:text-base w-full sm:w-auto justify-center">
+                <CheckCircle size={20} /> Corrigir duplicados
+              </button>
+            </div>
             <div className="grid gap-4">
               {users.filter(u => !u.isAdmin).map((user) => {
                 const userPreds = predictions.filter(p => p.userId === user.id);
@@ -4333,8 +4519,34 @@ const AdminPanel = ({ setView }) => {
                       <div>
                         <h3 className="text-lg font-bold">{user.name}</h3>
                         <p className="text-gray-600 text-sm">{user.whatsapp}</p>
+                        {(() => {
+                          const est = establishments.find(e => e.id === user.establishmentId);
+                          return est ? (
+                            <p className="text-xs text-orange-600 flex items-center gap-1 mt-1">
+                              <Store size={12} /> {est.name}
+                            </p>
+                          ) : (
+                            <p className="text-xs text-gray-400 mt-1">Sem estabelecimento</p>
+                          );
+                        })()}
                       </div>
                       <div className="flex flex-wrap items-center gap-3 sm:gap-4">
+                        <select
+                          value={user.establishmentId || ''}
+                          onChange={async (e) => {
+                            try {
+                              await updateUser(user.id, { establishmentId: e.target.value || null });
+                            } catch (err) {
+                              alert('Erro ao alterar estabelecimento: ' + err.message);
+                            }
+                          }}
+                          className="px-3 py-2 border rounded-lg text-sm bg-white"
+                        >
+                          <option value="">Sem estabelecimento</option>
+                          {establishments.map(est => (
+                            <option key={est.id} value={est.id}>{est.name}</option>
+                          ))}
+                        </select>
 
                         <button 
                           onClick={() => setEditingPassword(user)} 
@@ -4944,7 +5156,7 @@ const AdminPanel = ({ setView }) => {
                   {/* Modelos: dropdown categorizado com preview e ações */}
                   <div className="mt-4">
                     <div className="bg-gradient-to-r from-green-600 to-green-700 text-white p-3 rounded-t-lg">
-                      <h4 className="font-semibold text-sm">Modelos • {settings?.brandName || 'Bolão Brasileiro 2025'}</h4>
+                      <h4 className="font-semibold text-sm">Modelos • {settings?.brandName || 'Bolão Brasileiro 2026'}</h4>
                     </div>
                     <div className="border rounded-b-lg p-3 bg-white">
                       <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 items-end">
@@ -5149,7 +5361,7 @@ const AdminPanel = ({ setView }) => {
 };
 
 const UserPanel = ({ setView }) => {
-  const { currentUser, setCurrentUser, logout, teams, rounds, predictions, users, establishments, addPrediction, settings, deleteCartelaPredictions } = useApp();
+  const { currentUser, setCurrentUser, logout, teams, rounds, predictions, users, establishments, addPrediction, settings, deleteCartelaPredictions, updateUser } = useApp();
   const [activeTab, setActiveTab] = useState('predictions');
   const [selectedRound, setSelectedRound] = useState(null);
   const [showConfirmModal, setShowConfirmModal] = useState(false);
@@ -5157,8 +5369,6 @@ const UserPanel = ({ setView }) => {
   const [expandedRounds, setExpandedRounds] = useState({});
   const [selectedRankingRound, setSelectedRankingRound] = useState(null);
   const [editingPredictions, setEditingPredictions] = useState(null);
-  const [selectedEstablishment, setSelectedEstablishment] = useState(null);
-  const [showEstablishmentModal, setShowEstablishmentModal] = useState(false);
   const [showRulesModal, setShowRulesModal] = useState(false);
   const [cartelaDetails, setCartelaDetails] = useState(null);
   // Estados para a aba "Rodadas Finalizadas"
@@ -5330,16 +5540,6 @@ const UserPanel = ({ setView }) => {
       return;
     }
     setSelectedRound(round);
-    if (establishments.length > 0) {
-      setShowEstablishmentModal(true);
-    } else {
-      setSelectedEstablishment(null);
-    }
-  };
-
-  const handleEstablishmentSelected = (estId) => {
-    setSelectedEstablishment(estId);
-    setShowEstablishmentModal(false);
   };
 
   const handleDeleteCartela = async (roundId, cartelaCode) => {
@@ -5352,49 +5552,7 @@ const UserPanel = ({ setView }) => {
     }
   };
 
-  const EstablishmentModal = ({ onSelect, onCancel }) => (
-    <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
-      <div className="bg-white rounded-xl max-w-md w-full max-h-[90vh] overflow-y-auto">
-        <div className="p-4 border-b sticky top-0 bg-white">
-          <h3 className="text-xl font-bold flex items-center gap-2">
-            <Store size={22} className="text-orange-600" />
-            Selecione o Estabelecimento
-          </h3>
-          <p className="text-gray-600 text-xs mt-1">Escolha onde você está participando</p>
-        </div>
-        <div className="p-4 space-y-2">
-          <button
-            onClick={() => onSelect(null)}
-            className="group w-full p-3 border rounded-lg text-left transition hover:border-gray-300 focus:outline-none focus:ring-2 focus:ring-gray-300"
-          >
-            <p className="font-medium text-sm">Nenhum estabelecimento</p>
-            <p className="text-xs text-gray-500">Participação direta</p>
-          </button>
-          {establishments.map(est => (
-            <button
-              key={est.id}
-              onClick={() => onSelect(est.id)}
-              className="group w-full p-3 border rounded-lg text-left transition hover:bg-orange-50 hover:border-orange-300 focus:outline-none focus:ring-2 focus:ring-orange-300"
-            >
-              <div className="flex items-start gap-2">
-                <div className="bg-orange-100 p-1.5 rounded-lg">
-                  <Store size={18} className="text-orange-600" />
-                </div>
-                <div className="leading-tight">
-                  <p className="font-medium text-sm">{est.name}</p>
-                  {est.contact && <p className="text-xs text-gray-600">{est.contact}</p>}
-                  {est.phone && <p className="text-[11px] text-gray-500">{est.phone}</p>}
-                </div>
-              </div>
-            </button>
-          ))}
-        </div>
-        <div className="p-4 border-t sticky bottom-0 bg-white">
-          <button onClick={onCancel} className="w-full px-4 py-2 border rounded-lg text-sm">Cancelar</button>
-        </div>
-      </div>
-    </div>
-  );
+
 
   const RoundAccordion = ({ round }) => {
     const isExpanded = expandedRounds[round.id];
@@ -5715,11 +5873,11 @@ const UserPanel = ({ setView }) => {
         return;
       }
 
-      setPendingPredictions({ round, predictions: allPreds, cartelaCode, establishmentId: selectedEstablishment });
+      setPendingPredictions({ round, predictions: allPreds, cartelaCode, establishmentId: currentUser.establishmentId || null });
       setShowConfirmModal(true);
     };
 
-    const selectedEst = establishments.find(e => e.id === selectedEstablishment);
+    const selectedEst = establishments.find(e => e.id === currentUser.establishmentId);
 
     return (
       <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
@@ -6309,7 +6467,7 @@ const UserPanel = ({ setView }) => {
       try {
         // Buscar a mensagem diretamente do banco para garantir que está atualizada
         const settingsSnapshot = await getDocs(collection(db, 'settings'));
-        let messageTemplate = '🏆 *BOLÃO BRASILEIRÃO 2025*\n\n📋 *{RODADA}*\n🎫 *Cartela: {CARTELA}*\n✅ Confirmado!\n\n{PALPITES}\n\n💰 R$ 15,00\n⚠️ *Não pode alterar após pagamento*\n\nBoa sorte! 🍀';
+        let messageTemplate = '🏆 *BOLÃO BRASILEIRÃO 2026*\n\n📋 *{RODADA}*\n🎫 *Cartela: {CARTELA}*\n✅ Confirmado!\n\n{PALPITES}\n\n💰 R$ 15,00\n⚠️ *Não pode alterar após pagamento*\n\nBoa sorte! 🍀';
         
         let pixKey = '';
         let pixRecipientName = '';
@@ -6544,7 +6702,7 @@ const UserPanel = ({ setView }) => {
           <div className="flex justify-between items-center">
             <div>
               <h1 className="text-3xl font-bold">Olá, {currentUser.name}! 👋</h1>
-              <p className="text-green-100 mt-1">Bolão Brasileirão 2025</p>
+              <p className="text-green-100 mt-1">Bolão Brasileirão 2026</p>
             </div>
             <button onClick={() => { logout(); setView('login'); }} className="flex items-center gap-2 bg-green-700 px-4 py-2 rounded-lg">
               <LogOut size={18} /> Sair
@@ -7138,13 +7296,7 @@ const UserPanel = ({ setView }) => {
         )}
       </div>
 
-      {showEstablishmentModal && selectedRound && (
-        <EstablishmentModal 
-          onSelect={handleEstablishmentSelected} 
-          onCancel={() => { setShowEstablishmentModal(false); setSelectedRound(null); }} 
-        />
-      )}
-      {selectedRound && !showEstablishmentModal && <PredictionForm round={selectedRound} initialPredictions={editingPredictions} />}
+      {selectedRound && <PredictionForm round={selectedRound} initialPredictions={editingPredictions} />}
       {showConfirmModal && pendingPredictions && (
         <ConfirmModal 
           round={pendingPredictions.round} 
@@ -7180,7 +7332,7 @@ const UserPanel = ({ setView }) => {
 // Tela de Manutenção
 const MaintenanceScreen = () => {
   const { settings } = useApp();
-  const brand = settings?.brandName || 'Bolão Brasileiro 2025';
+  const brand = settings?.brandName || 'Bolão Brasileiro 2026';
   const message = settings?.maintenanceMessage || 'Estamos realizando uma manutenção programada para melhorar sua experiência. Por favor, tente novamente em breve.';
   const untilMs = settings?.maintenanceUntil || null;
   const [remaining, setRemaining] = useState('');
