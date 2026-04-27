@@ -1349,6 +1349,22 @@ const AdminPanel = ({ setView }) => {
   const [monthlyTotal, setMonthlyTotal] = useState(0);
 
   useEffect(() => {
+    if (activeTab === 'financial' && !selectedFinanceRound && rounds.length > 0) {
+      const openRound = rounds.find(r => r.status === 'open');
+      if (openRound) {
+        setSelectedFinanceRound(openRound.id);
+      } else {
+        const sorted = [...rounds].sort((a, b) => {
+          const tA = a.createdAt?.seconds || 0;
+          const tB = b.createdAt?.seconds || 0;
+          return tB - tA;
+        });
+        setSelectedFinanceRound(sorted[0].id);
+      }
+    }
+  }, [activeTab, rounds, selectedFinanceRound]);
+
+  useEffect(() => {
     if (!currentUser?.isAdmin) return;
     const unsub = onSnapshot(doc(db, 'admins', currentUser.id), (snap) => {
       const d = snap.data() || {};
