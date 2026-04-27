@@ -6976,8 +6976,9 @@ const UserPanel = ({ setView }) => {
                       <p className="text-xs text-yellow-200 mt-1">Resultados parciais (rodada fechada)</p>
                     )}
                   </div>
-                  <table className="w-full">
-                    <thead className="bg-gray-50 border-b">
+                  <div className="overflow-x-auto">
+                    <table className="w-full min-w-[500px]">
+                      <thead className="bg-gray-50 border-b">
                       <tr>
                         <th className="px-6 py-4 text-left text-xs font-medium text-gray-500 uppercase">Posição</th>
                         <th className="px-6 py-4 text-left text-xs font-medium text-gray-500 uppercase">Participante</th>
@@ -7048,6 +7049,7 @@ const UserPanel = ({ setView }) => {
                       })}
                     </tbody>
                   </table>
+                  </div>
                   
                   {ranking.length === 0 && (
                     <div className="p-12 text-center">
@@ -7169,9 +7171,10 @@ const UserPanel = ({ setView }) => {
                 )}
 
                 <div className="bg-white rounded-xl overflow-hidden shadow">
-                  <table className="min-w-full">
-                    <thead>
-                      <tr className="bg-gray-50">
+                  <div className="overflow-x-auto">
+                    <table className="w-full min-w-[500px]">
+                      <thead>
+                        <tr className="bg-gray-50">
                         <th className="px-6 py-4 text-left text-xs font-medium text-gray-500 uppercase">Participante</th>
                         <th className="px-6 py-4 text-center text-xs font-medium text-gray-500 uppercase">Cartela</th>
                         <th className="px-6 py-4 text-center text-xs font-medium text-gray-500 uppercase">Estabelecimento</th>
@@ -7221,6 +7224,7 @@ const UserPanel = ({ setView }) => {
                       })}
                     </tbody>
                   </table>
+                  </div>
 
                   {finishedRanking.length === 0 && (
                     <div className="p-12 text-center">
